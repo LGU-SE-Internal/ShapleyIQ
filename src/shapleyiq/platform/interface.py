@@ -1,67 +1,58 @@
 """
 Platform Interface Specifications
-定义新平台的算法接口规范
+定义新平台的算法接口规范和数据转换
 """
 
-from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-import pandas as pd
 import polars as pl
+from rcabench_platform.v2.algorithms.spec import (
+    AlgorithmAnswer as RCABenchAlgorithmAnswer,
+)
 
 # Import rcabench specs
 from rcabench_platform.v2.algorithms.spec import (
-    Algorithm as RCABenchAlgorithm,
     AlgorithmArgs as RCABenchAlgorithmArgs,
-    AlgorithmAnswer as RCABenchAlgorithmAnswer,
 )
 
 
 @dataclass
-class ShapleyIQAlgorithmArgs:
-    """Extended algorithm input arguments for ShapleyIQ"""
+class ShapleyIQData:
+    """ShapleyIQ平台数据结构"""
 
-    input_folder: Path
     traces: Optional[pl.LazyFrame] = None
     inject_time: Optional[Any] = None
-    parameters: Optional[Dict[str, Any]] = None
 
 
-class BaseAdapter:
-    """Base adapter for converting between old and new interfaces"""
+class PlatformDataConverter:
+    """平台数据转换器"""
 
-    def __init__(self, algorithm_func):
-        self.algorithm_func = algorithm_func
-
-    def __call__(self, args: ShapleyIQAlgorithmArgs) -> List[RCABenchAlgorithmAnswer]:
-        """Convert new interface to old and back"""
-        raise NotImplementedError("Subclasses must implement this method")
-
-
-class ShapleyIQAlgorithmWrapper(RCABenchAlgorithm):
-    """Wrapper to adapt ShapleyIQ algorithms to rcabench interface"""
-
-    def __init__(self, adapter: BaseAdapter, cpu_count: Optional[int] = None):
-        self.adapter = adapter
-        self._cpu_count = cpu_count
-
-    def needs_cpu_count(self) -> int | None:
-        return self._cpu_count
-
-    def __call__(self, args: RCABenchAlgorithmArgs) -> List[RCABenchAlgorithmAnswer]:
-        # Convert rcabench args to ShapleyIQ args
+    @staticmethod
+    def from_rcabench_args(args: RCABenchAlgorithmArgs) -> ShapleyIQData:
+        """从rcabench参数转换为ShapleyIQ数据"""
         from .data_loader import PlatformDataLoader
 
         loader = PlatformDataLoader(args.input_folder)
         data = loader.load_all_data()
 
-        shapleyiq_args = ShapleyIQAlgorithmArgs(
-            input_folder=args.input_folder,
-            traces=data.get("traces"),
-            inject_time=data.get("inject_time"),
-            parameters={},
+        return ShapleyIQData(
+            traces=data.get("traces"), inject_time=data.get("inject_time")
         )
 
-        return self.adapter(shapleyiq_args)
+    @staticmethod
+    def to_rcabench_answers(
+        service_scores: Dict[str, float],
+    ) -> List[RCABenchAlgorithmAnswer]:
+        """将service级别的分数转换为rcabench答案格式"""
+        # 按分数排序
+        sorted_services = sorted(
+            service_scores.items(), key=lambda x: x[1], reverse=True
+        )
+
+        answers = []
+        for rank, (service_name, score) in enumerate(sorted_services, start=1):
+            answers.append(
+                RCABenchAlgorithmAnswer(level="service", name=service_name, rank=rank)
+            )
+        return answers
