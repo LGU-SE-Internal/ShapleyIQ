@@ -82,36 +82,6 @@ def merge_two_time_ranges(normal: pl.LazyFrame, anomal: pl.LazyFrame) -> pl.Lazy
     return merged
 
 
-@timeit()
-def load_metrics(input_folder: Path) -> pl.LazyFrame:
-    """Load metrics data"""
-    normal_metrics = pl.scan_parquet(input_folder / "normal_metrics.parquet")
-    anomal_metrics = pl.scan_parquet(input_folder / "abnormal_metrics.parquet")
-    lf = merge_two_time_ranges(normal_metrics, anomal_metrics)
-    return lf
-
-
-@timeit()
-def load_metrics_histogram(input_folder: Path) -> pl.LazyFrame:
-    """Load metrics histogram data"""
-    normal_histogram = pl.scan_parquet(
-        input_folder / "normal_metrics_histogram.parquet"
-    )
-    anomal_histogram = pl.scan_parquet(
-        input_folder / "abnormal_metrics_histogram.parquet"
-    )
-    lf = merge_two_time_ranges(normal_histogram, anomal_histogram)
-
-    lf = lf.with_columns(
-        pl.when(pl.col("metric") == "jvm.gc.duration")
-        .then(
-            pl.concat_str("metric", "attr.jvm.gc.name", separator=":").alias("metric")
-        )
-        .otherwise(pl.col("metric"))
-    )
-
-    return lf
-
 
 def ui_span_name_parser(df: pl.DataFrame) -> pl.DataFrame:
     """
@@ -165,35 +135,10 @@ def load_traces(input_folder: Path) -> pl.LazyFrame:
     return lf
 
 
-@timeit()
-def load_logs(input_folder: Path) -> pl.LazyFrame:
-    """Load logs data"""
-    normal_logs = pl.scan_parquet(input_folder / "normal_logs.parquet")
-    anomal_logs = pl.scan_parquet(input_folder / "abnormal_logs.parquet")
-    lf = merge_two_time_ranges(normal_logs, anomal_logs)
 
-    level_values = ["", "TRACE", "DEBUG", "INFO", "WARN", "ERROR", "SEVERE"]
-    lf = lf.with_columns(pl.col("level").str.replace("WARNING", "WARN", literal=True))
-    lf = lf.with_columns(
-        replace_enum_values("level", level_values, start=0).alias("level_number")
-    )
-
-    return lf
-
-
-def is_special_constant_metric(metric: str) -> bool:
-    """Check if metric is a special constant metric"""
-    return metric in (
-        "k8s.container.cpu_request",
-        "k8s.container.memory_request",
-        "k8s.container.cpu_limit",
-        "k8s.container.memory_limit",
-    )
-
-
-class NewPlatformDataLoader:
+class PlatformDataLoader:
     """
-    New platform data loader for ShapleyIQ algorithms
+    platform data loader for ShapleyIQ algorithms
     """
 
     def __init__(self, input_folder: Path):
@@ -207,18 +152,6 @@ class NewPlatformDataLoader:
         # Load traces
         if (self.input_folder / "normal_traces.parquet").exists():
             data["traces"] = load_traces(self.input_folder)
-
-        # Load metrics
-        if (self.input_folder / "normal_metrics.parquet").exists():
-            data["metrics"] = load_metrics(self.input_folder)
-
-        # Load metrics histogram
-        if (self.input_folder / "normal_metrics_histogram.parquet").exists():
-            data["metrics_histogram"] = load_metrics_histogram(self.input_folder)
-
-        # Load logs
-        if (self.input_folder / "normal_logs.parquet").exists():
-            data["logs"] = load_logs(self.input_folder)
 
         data["inject_time"] = self.inject_time
         return data

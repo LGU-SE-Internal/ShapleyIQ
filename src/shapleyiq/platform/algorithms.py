@@ -7,14 +7,17 @@ from datetime import datetime
 from typing import Dict, List
 
 import polars as pl
+from rcabench_platform.v2.algorithms.spec import (
+    AlgorithmAnswer as RCABenchAlgorithmAnswer,
+)
 
-from ..algorithms.microhecl import MicroHECL as OriginalMicroHECL
-from ..algorithms.microrank import MicroRank as OriginalMicroRank
-from ..algorithms.microrca import MicroRCA as OriginalMicroRCA
-from ..algorithms.shapley_value_rca import ShapleyValueRCA as OriginalShapleyRCA
-from ..algorithms.ton import TON as OriginalTON
+from ..algorithms.microhecl import MicroHECL
+from ..algorithms.microrank import MicroRank
+from ..algorithms.microrca import MicroRCA
+from ..algorithms.shapley_value_rca import ShapleyValueRCA
+from ..algorithms.ton import TON
 from ..data_structures import Edge, RCAData, ServiceNode, TraceData
-from .interface import Algorithm, AlgorithmAnswer, AlgorithmArgs
+from .interface import BaseAdapter, ShapleyIQAlgorithmArgs
 
 
 def safe_convert_to_int(value):
@@ -85,7 +88,7 @@ def convert_polars_traces_to_rca_data(traces_lf: pl.LazyFrame) -> RCAData:
     service_to_operations = {}
     trace_data_dict = {}
     ts_data_dict = {}
-    
+
     # 为MicroRank等算法分类正常和异常traces
     normal_traces = {}
     abnormal_traces = {}
@@ -95,9 +98,11 @@ def convert_polars_traces_to_rca_data(traces_lf: pl.LazyFrame) -> RCAData:
         trace_spans_df = group_data[1]  # Get the spans DataFrame
 
         trace_id_str = str(trace_id_val)
-        
+
         # 检查这个trace是否为异常trace（根据anomal标记）
-        is_anomal_trace = any(row.get("anomal", 0) == 1 for row in trace_spans_df.iter_rows(named=True))
+        is_anomal_trace = any(
+            row.get("anomal", 0) == 1 for row in trace_spans_df.iter_rows(named=True)
+        )
 
         # Convert each span to the format expected by TraceData
         spans = []
@@ -171,7 +176,7 @@ def convert_polars_traces_to_rca_data(traces_lf: pl.LazyFrame) -> RCAData:
             timestamp=spans[0]["startTime"] if spans else 0,
         )
         traces.append(trace_data)
-        
+
         # 根据anomal标记分类trace
         if is_anomal_trace:
             abnormal_traces[trace_id_str] = spans
@@ -200,10 +205,10 @@ def convert_polars_traces_to_rca_data(traces_lf: pl.LazyFrame) -> RCAData:
                 break
 
     # Create RCAData object with complete data
-    
+
     # 为MicroRank算法构建metrics_statistical_data（仅使用正常数据）
     metrics_statistical_data = {}
-    
+
     # 首先构建正常数据的时间序列
     normal_ts_data_dict = {}
     for trace_id_str, spans in normal_traces.items():
@@ -212,44 +217,58 @@ def convert_polars_traces_to_rca_data(traces_lf: pl.LazyFrame) -> RCAData:
             operation_name = span.get("operationName", "")
             if service_name and operation_name:
                 node_id = f"{service_name}:{operation_name}"
-                duration = safe_convert_to_int(span.get("duration", span.get("Duration", 0)))
-                
+                duration = safe_convert_to_int(
+                    span.get("duration", span.get("Duration", 0))
+                )
+
                 if node_id not in normal_ts_data_dict:
                     normal_ts_data_dict[node_id] = {"Duration": [], "MaxDuration": []}
                 normal_ts_data_dict[node_id]["Duration"].append(duration)
                 normal_ts_data_dict[node_id]["MaxDuration"].append(duration)
-    
+
     # 从正常数据计算统计信息
     for node_id, ts_data in normal_ts_data_dict.items():
         durations = ts_data.get("Duration", [])
         if durations:
             import statistics
+
             mean_duration = statistics.mean(durations)
             std_duration = statistics.stdev(durations) if len(durations) > 1 else 0
             count = len(durations)
             metrics_statistical_data[node_id] = {
                 "Duration": [mean_duration, std_duration, count]
             }
-    
+
     # 为root_id添加特殊的统计数据（同样只使用正常数据）
     if root_id:
         root_durations = []
         for trace_id_str, spans in normal_traces.items():
             for span in spans:
-                if not span.get("parentSpanId") and span.get("serviceName") and span.get("operationName"):
+                if (
+                    not span.get("parentSpanId")
+                    and span.get("serviceName")
+                    and span.get("operationName")
+                ):
                     span_node_id = f"{span['serviceName']}:{span['operationName']}"
                     if span_node_id == root_id:
-                        root_durations.append(span.get("duration", span.get("Duration", 0)))
-        
+                        root_durations.append(
+                            span.get("duration", span.get("Duration", 0))
+                        )
+
         if root_durations:
             import statistics
+
             mean_duration = statistics.mean(root_durations)
-            std_duration = statistics.stdev(root_durations) if len(root_durations) > 1 else mean_duration * 0.1
+            std_duration = (
+                statistics.stdev(root_durations)
+                if len(root_durations) > 1
+                else mean_duration * 0.1
+            )
             count = len(root_durations)
             metrics_statistical_data[root_id] = {
                 "Duration": [mean_duration, std_duration, count]
             }
-    
+
     rca_data = RCAData(
         edges=all_edges,
         nodes=nodes,
@@ -271,290 +290,194 @@ def convert_polars_traces_to_rca_data(traces_lf: pl.LazyFrame) -> RCAData:
     return rca_data
 
 
-class ShapleyRCA(Algorithm):
+class ShapleyRCAAdapter(BaseAdapter):
     """
-    完整的ShapleyValueRCA实现，使用原版算法逻辑
+    ShapleyValueRCA适配器
     """
 
     def __init__(self, using_cache: bool = False, sync_overlap_threshold: float = 0.05):
         self.using_cache = using_cache
         self.sync_overlap_threshold = sync_overlap_threshold
-        self.algorithm = OriginalShapleyRCA(
+        self.algorithm = ShapleyValueRCA(
             using_cache=using_cache, sync_overlap_threshold=sync_overlap_threshold
         )
 
-    def __call__(self, args: AlgorithmArgs) -> List[AlgorithmAnswer]:
+    def __call__(self, args: ShapleyIQAlgorithmArgs) -> List[RCABenchAlgorithmAnswer]:
         if args.traces is None:
-            return [AlgorithmAnswer(ranks=[])]
+            return []
 
-        try:
-            # 转换数据格式
-            rca_data = convert_polars_traces_to_rca_data(args.traces)
 
-            # 使用原版算法运行分析
-            results = self.algorithm.run(
-                rca_data, strategy="avg_by_contribution", sort_result=True
-            )
+        # 转换数据格式
+        rca_data = convert_polars_traces_to_rca_data(args.traces)
 
-            # 转换结果格式
-            ranks = []
-            scores = {}
-            service_ranking = []
-            if isinstance(results, dict):
-                # 按分数排序
-                sorted_results = sorted(
-                    results.items(), key=lambda x: x[1], reverse=True
+        # 使用原版算法运行分析
+        results = self.algorithm.run(
+            rca_data, strategy="avg_by_contribution", sort_result=True
+        )
+
+        # 转换结果为service级别排序
+        if isinstance(results, dict):
+            service_ranking = aggregate_to_service_level(results)
+
+            answers = []
+            for rank, service_name in enumerate(service_ranking, start=1):
+                answers.append(
+                    RCABenchAlgorithmAnswer(
+                        level="service", name=service_name, rank=rank
+                    )
                 )
-                ranks = [node_id for node_id, score in sorted_results]
-                scores = {node_id: float(score) for node_id, score in sorted_results}
+            return answers
 
-                # 聚合到service级别
-                service_ranking = aggregate_to_service_level(results)
-
-            return [
-                AlgorithmAnswer(
-                    ranks=ranks,
-                    scores=scores,
-                    node_names=list(rca_data.node_ids) if rca_data else [],
-                    service_ranking=service_ranking,
-                    metadata={
-                        "algorithm": "ShapleyRCA",
-                        "strategy": "avg_by_contribution",
-                    },
-                )
-            ]
-
-        except Exception as e:
-            print(f"ShapleyRCA error: {e}")
-            import traceback
-
-            traceback.print_exc()
-            return [AlgorithmAnswer(ranks=[])]
+        return []
 
 
-class MicroHECL(Algorithm):
+class MicroHECLAdapter(BaseAdapter):
     """
-    完整的MicroHECL实现，使用原版算法逻辑
+    MicroHECL适配器
     """
 
     def __init__(self, time_window: int = 15):
         self.time_window = time_window
-        self.algorithm = OriginalMicroHECL(time_window=time_window)
+        self.algorithm = MicroHECL(time_window=time_window)
 
-    def __call__(self, args: AlgorithmArgs) -> List[AlgorithmAnswer]:
+    def __call__(self, args: ShapleyIQAlgorithmArgs) -> List[RCABenchAlgorithmAnswer]:
         if args.traces is None:
-            return [AlgorithmAnswer(ranks=[])]
+            return []
 
-        try:
-            # 转换数据格式
-            rca_data = convert_polars_traces_to_rca_data(args.traces)
 
-            # 确定初始异常节点
-            initial_anomalous_node = rca_data.root_id if rca_data.root_id else None
-            if not initial_anomalous_node and rca_data.node_ids:
-                initial_anomalous_node = rca_data.node_ids[0]
+        # 转换数据格式
+        rca_data = convert_polars_traces_to_rca_data(args.traces)
 
-            # 使用原版算法运行分析
-            results = self.algorithm.run(
-                rca_data,
-                initial_anomalous_node=initial_anomalous_node,
-                detect_metrics=["RT"],
-            )
+        # 确定初始异常节点
+        initial_anomalous_node = rca_data.root_id if rca_data.root_id else None
+        if not initial_anomalous_node and rca_data.node_ids:
+            initial_anomalous_node = rca_data.node_ids[0]
 
-            # 转换结果格式
-            ranks = []
-            scores = {}
-            service_ranking = []
-            if isinstance(results, dict):
-                # 按分数排序
-                sorted_results = sorted(
-                    results.items(), key=lambda x: x[1], reverse=True
+        # 使用原版算法运行分析
+        results = self.algorithm.run(
+            rca_data,
+            initial_anomalous_node=initial_anomalous_node,
+            detect_metrics=["RT"],
+        )
+
+        # 转换结果为service级别排序
+        if isinstance(results, dict):
+            service_ranking = aggregate_to_service_level(results)
+
+            answers = []
+            for rank, service_name in enumerate(service_ranking, start=1):
+                answers.append(
+                    RCABenchAlgorithmAnswer(
+                        level="service", name=service_name, rank=rank
+                    )
                 )
-                ranks = [node_id for node_id, score in sorted_results]
-                scores = {node_id: float(score) for node_id, score in sorted_results}
+            return answers
 
-                # 聚合到service级别
-                service_ranking = aggregate_to_service_level(results)
-
-            return [
-                AlgorithmAnswer(
-                    ranks=ranks,
-                    scores=scores,
-                    node_names=list(rca_data.node_ids) if rca_data else [],
-                    service_ranking=service_ranking,
-                    metadata={
-                        "algorithm": "MicroHECL",
-                        "time_window": self.time_window,
-                    },
-                )
-            ]
-
-        except Exception as e:
-            print(f"MicroHECL error: {e}")
-            import traceback
-
-            traceback.print_exc()
-            return [AlgorithmAnswer(ranks=[])]
+        return []
 
 
-class MicroRCA(Algorithm):
+
+class MicroRCAAdapter(BaseAdapter):
     """
-    完整的MicroRCA实现，使用原版算法逻辑
+    MicroRCA适配器
     """
 
     def __init__(self, time_window: int = 15):
         self.time_window = time_window
-        self.algorithm = OriginalMicroRCA(time_window=time_window)
+        self.algorithm = MicroRCA(time_window=time_window)
 
-    def __call__(self, args: AlgorithmArgs) -> List[AlgorithmAnswer]:
+    def __call__(self, args: ShapleyIQAlgorithmArgs) -> List[RCABenchAlgorithmAnswer]:
         if args.traces is None:
-            return [AlgorithmAnswer(ranks=[])]
+            return []
 
-        try:
-            # 转换数据格式
-            rca_data = convert_polars_traces_to_rca_data(args.traces)
+        # 转换数据格式
+        rca_data = convert_polars_traces_to_rca_data(args.traces)
 
-            # 使用原版算法运行分析
-            results = self.algorithm.run(rca_data)
+        # 使用原版算法运行分析
+        results = self.algorithm.run(rca_data)
 
-            # 转换结果格式
-            ranks = []
-            scores = {}
-            service_ranking = []
-            if isinstance(results, dict):
-                # 按分数排序
-                sorted_results = sorted(
-                    results.items(), key=lambda x: x[1], reverse=True
+        # 转换结果为service级别排序
+        if isinstance(results, dict):
+            service_ranking = aggregate_to_service_level(results)
+
+            answers = []
+            for rank, service_name in enumerate(service_ranking, start=1):
+                answers.append(
+                    RCABenchAlgorithmAnswer(
+                        level="service", name=service_name, rank=rank
+                    )
                 )
-                ranks = [node_id for node_id, score in sorted_results]
-                scores = {node_id: float(score) for node_id, score in sorted_results}
+            return answers
 
-                # 聚合到service级别
-                service_ranking = aggregate_to_service_level(results)
-
-            return [
-                AlgorithmAnswer(
-                    ranks=ranks,
-                    scores=scores,
-                    node_names=list(rca_data.node_ids) if rca_data else [],
-                    service_ranking=service_ranking,
-                    metadata={"algorithm": "MicroRCA", "time_window": self.time_window},
-                )
-            ]
-
-        except Exception as e:
-            print(f"MicroRCA error: {e}")
-            import traceback
-
-            traceback.print_exc()
-            return [AlgorithmAnswer(ranks=[])]
+        return []
 
 
-class TON(Algorithm):
+
+class TONAdapter(BaseAdapter):
     """
-    完整的TON实现，使用原版算法逻辑
+    TON适配器
     """
 
     def __init__(self, time_window: int = 15):
         self.time_window = time_window
-        self.algorithm = OriginalTON(time_window=time_window)
+        self.algorithm = TON(time_window=time_window)
 
-    def __call__(self, args: AlgorithmArgs) -> List[AlgorithmAnswer]:
+    def __call__(self, args: ShapleyIQAlgorithmArgs) -> List[RCABenchAlgorithmAnswer]:
         if args.traces is None:
-            return [AlgorithmAnswer(ranks=[])]
+            return []
 
-        try:
-            # 转换数据格式
-            rca_data = convert_polars_traces_to_rca_data(args.traces)
+        rca_data = convert_polars_traces_to_rca_data(args.traces)
 
-            # 使用原版算法运行分析
-            results = self.algorithm.run(rca_data, operation_only=True)
+        # 使用原版算法运行分析
+        results = self.algorithm.run(rca_data, operation_only=True)
 
-            # 转换结果格式
-            ranks = []
-            scores = {}
-            service_ranking = []
-            if isinstance(results, dict):
-                # 按分数排序
-                sorted_results = sorted(
-                    results.items(), key=lambda x: x[1], reverse=True
+        # 转换结果为service级别排序
+        if isinstance(results, dict):
+            service_ranking = aggregate_to_service_level(results)
+
+            answers = []
+            for rank, service_name in enumerate(service_ranking, start=1):
+                answers.append(
+                    RCABenchAlgorithmAnswer(
+                        level="service", name=service_name, rank=rank
+                    )
                 )
-                ranks = [node_id for node_id, score in sorted_results]
-                scores = {node_id: float(score) for node_id, score in sorted_results}
+            return answers
 
-                # 聚合到service级别
-                service_ranking = aggregate_to_service_level(results)
-
-            return [
-                AlgorithmAnswer(
-                    ranks=ranks,
-                    scores=scores,
-                    node_names=list(rca_data.node_ids) if rca_data else [],
-                    service_ranking=service_ranking,
-                    metadata={
-                        "algorithm": "TON",
-                        "time_window": self.time_window,
-                        "operation_only": True,
-                    },
-                )
-            ]
-
-        except Exception as e:
-            print(f"TON error: {e}")
-            import traceback
-
-            traceback.print_exc()
-            return [AlgorithmAnswer(ranks=[])]
+        return []
 
 
-class MicroRank(Algorithm):
+
+class MicroRankAdapter(BaseAdapter):
     """
-    完整的MicroRank实现，使用原版算法逻辑
+    MicroRank适配器
     """
 
     def __init__(self, n_sigma: int = 3):
         self.n_sigma = n_sigma
-        self.algorithm = OriginalMicroRank(n_sigma=n_sigma)
+        self.algorithm = MicroRank(n_sigma=n_sigma)
 
-    def __call__(self, args: AlgorithmArgs) -> List[AlgorithmAnswer]:
+    def __call__(self, args: ShapleyIQAlgorithmArgs) -> List[RCABenchAlgorithmAnswer]:
         if args.traces is None:
-            return [AlgorithmAnswer(ranks=[])]
+            return []
 
-        try:
-            # 转换数据格式
-            rca_data = convert_polars_traces_to_rca_data(args.traces)
+        # 转换数据格式
+        rca_data = convert_polars_traces_to_rca_data(args.traces)
 
-            # 使用原版算法运行分析
-            results = self.algorithm.run(rca_data, phi=0.5, omega=0.01, d=0.04)
+        # 使用原版算法运行分析
+        results = self.algorithm.run(rca_data, phi=0.5, omega=0.01, d=0.04)
 
-            # 转换结果格式
-            ranks = []
-            scores = {}
-            service_ranking = []
-            if isinstance(results, dict):
-                # 按分数排序
-                sorted_results = sorted(
-                    results.items(), key=lambda x: x[1], reverse=True
+        # 转换结果为service级别排序
+        if isinstance(results, dict):
+            service_ranking = aggregate_to_service_level(results)
+
+            answers = []
+            for rank, service_name in enumerate(service_ranking, start=1):
+                answers.append(
+                    RCABenchAlgorithmAnswer(
+                        level="service", name=service_name, rank=rank
+                    )
                 )
-                ranks = [node_id for node_id, score in sorted_results]
-                scores = {node_id: float(score) for node_id, score in sorted_results}
+            return answers
 
-                # 聚合到service级别
-                service_ranking = aggregate_to_service_level(results)
-
-            return [
-                AlgorithmAnswer(
-                    ranks=ranks,
-                    scores=scores,
-                    node_names=list(rca_data.node_ids) if rca_data else [],
-                    service_ranking=service_ranking,
-                    metadata={"algorithm": "MicroRank", "n_sigma": self.n_sigma},
-                )
-            ]
-
-        except Exception as e:
-            print(f"MicroRank error: {e}")
-            import traceback
-
-            traceback.print_exc()
-            return [AlgorithmAnswer(ranks=[])]
+        return []
