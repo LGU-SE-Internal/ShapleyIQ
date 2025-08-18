@@ -9,7 +9,6 @@ import math
 import time
 from functools import wraps
 from pathlib import Path
-from typing import Optional
 
 import polars as pl
 from rcabench_platform.v2.logging import logger
@@ -68,7 +67,7 @@ def load_inject_time(input_folder: Path) -> datetime.datetime:
         inject_time = abnormal_start
 
     inject_time = datetime.datetime.fromtimestamp(inject_time, tz=datetime.timezone.utc)
-    logger.debug(f"inject_time=`{inject_time}`")
+    # logger.debug(f"inject_time=`{inject_time}`")
 
     return inject_time
 
@@ -196,30 +195,30 @@ class NewPlatformDataLoader:
     """
     New platform data loader for ShapleyIQ algorithms
     """
-    
+
     def __init__(self, input_folder: Path):
         self.input_folder = Path(input_folder)
         self.inject_time = load_inject_time(self.input_folder)
-        
+
     def load_all_data(self):
         """Load all available data types"""
         data = {}
-        
+
         # Load traces
         if (self.input_folder / "normal_traces.parquet").exists():
-            data['traces'] = load_traces(self.input_folder)
-            
+            data["traces"] = load_traces(self.input_folder)
+
         # Load metrics
         if (self.input_folder / "normal_metrics.parquet").exists():
-            data['metrics'] = load_metrics(self.input_folder)
-            
+            data["metrics"] = load_metrics(self.input_folder)
+
         # Load metrics histogram
         if (self.input_folder / "normal_metrics_histogram.parquet").exists():
-            data['metrics_histogram'] = load_metrics_histogram(self.input_folder)
-            
+            data["metrics_histogram"] = load_metrics_histogram(self.input_folder)
+
         # Load logs
         if (self.input_folder / "normal_logs.parquet").exists():
-            data['logs'] = load_logs(self.input_folder)
-            
-        data['inject_time'] = self.inject_time
+            data["logs"] = load_logs(self.input_folder)
+
+        data["inject_time"] = self.inject_time
         return data

@@ -156,10 +156,10 @@ class ShapleyValueRCA(BaseRCAAlgorithm):
             timeline_dict = self._trace_to_timelines(spans)
             calling_tree = self._trace_to_calling_tree(spans)
 
-            logger.debug(
-                f"Timeline dict: {sorted(timeline_dict.items(), key=lambda x: x[1])}"
-            )
-            logger.debug(f"Calling tree: {calling_tree}")
+            # logger.debug(
+            #     f"Timeline dict: {sorted(timeline_dict.items(), key=lambda x: x[1])}"
+            # )
+            # logger.debug(f"Calling tree: {calling_tree}")
 
             # Step 2: Split timelines of callers
             all_timeline_segments = []
@@ -182,17 +182,17 @@ class ShapleyValueRCA(BaseRCAAlgorithm):
                 if key not in calling_tree:
                     all_timeline_segments.append(timeline)
 
-            logger.debug(
-                f"Timeline segments after splitting: {sorted(all_timeline_segments, key=lambda x: x[3], reverse=True)}"
-            )
+            # logger.debug(
+            #     f"Timeline segments after splitting: {sorted(all_timeline_segments, key=lambda x: x[3], reverse=True)}"
+            # )
 
             # Step 3: Merge synchronous timelines
             merged_timelines = self._merge_timelines(all_timeline_segments)
-            logger.debug(f"Merged timelines: {merged_timelines}")
+            # logger.debug(f"Merged timelines: {merged_timelines}")
 
             # Step 4: Calculate Shapley values
             contribution_dict = self._shapley_value_for_timelines(merged_timelines)
-            logger.debug(f"Contribution dict: {contribution_dict}")
+            # logger.debug(f"Contribution dict: {contribution_dict}")
 
             # Step 5: Distribute contributions to original nodes
             adjusted_contribution_dict = self._distribute_contribution_to_nodes(

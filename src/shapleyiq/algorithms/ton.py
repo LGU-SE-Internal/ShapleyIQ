@@ -334,7 +334,7 @@ class TON(BaseRCAAlgorithm):
             current_opinions = new_opinions
 
             if max_change < convergence_threshold:
-                logger.debug(f"TON converged after {iteration + 1} iterations")
+                # logger.debug(f"TON converged after {iteration + 1} iterations")
                 break
 
         # Sort by opinion value

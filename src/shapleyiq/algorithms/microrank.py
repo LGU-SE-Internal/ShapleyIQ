@@ -151,7 +151,7 @@ class MicroRank(BaseRCAAlgorithm):
         else:
             self.rt_threshold = 1000  # Default 1 second threshold
 
-        logger.debug(f"RT threshold set to: {self.rt_threshold}")
+        # logger.debug(f"RT threshold set to: {self.rt_threshold}")
 
     def _classify_trace(
         self,

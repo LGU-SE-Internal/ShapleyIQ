@@ -299,7 +299,7 @@ class MicroRCA(BaseRCAAlgorithm):
                     else:
                         weighted_adjacency_table[source_id][target_id] = 0
                 else:
-                    logger.debug(f"No time series data for {target_id}")
+                    # logger.debug(f"No time series data for {target_id}")
                     weighted_adjacency_table[source_id][target_id] = 0
 
         return weighted_adjacency_table

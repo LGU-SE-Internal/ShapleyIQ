@@ -226,10 +226,10 @@ class MicroHECL(BaseRCAAlgorithm):
         # Check for anomalies
         for value in data_to_detect:
             if value < threshold1 or value > threshold2:
-                logger.debug(f"Anomaly detected for {node_id} {metric_type}: {value}")
+                # logger.debug(f"Anomaly detected for {node_id} {metric_type}: {value}")
                 return True
 
-        logger.debug(f"No anomaly for {node_id} {metric_type}")
+        # logger.debug(f"No anomaly for {node_id} {metric_type}")
         return False
 
     def _get_next_correlated_anomalous_nodes(
