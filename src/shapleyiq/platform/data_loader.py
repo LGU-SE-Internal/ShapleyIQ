@@ -82,7 +82,6 @@ def merge_two_time_ranges(normal: pl.LazyFrame, anomal: pl.LazyFrame) -> pl.Lazy
     return merged
 
 
-
 def ui_span_name_parser(df: pl.DataFrame) -> pl.DataFrame:
     """
     Parse UI dashboard span names by replacing with child span names
@@ -133,7 +132,6 @@ def load_traces(input_folder: Path) -> pl.LazyFrame:
     lf = df.lazy()
 
     return lf
-
 
 
 class PlatformDataLoader:

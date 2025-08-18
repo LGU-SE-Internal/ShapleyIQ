@@ -306,7 +306,6 @@ class ShapleyRCAAdapter(BaseAdapter):
         if args.traces is None:
             return []
 
-
         # 转换数据格式
         rca_data = convert_polars_traces_to_rca_data(args.traces)
 
@@ -344,7 +343,6 @@ class MicroHECLAdapter(BaseAdapter):
         if args.traces is None:
             return []
 
-
         # 转换数据格式
         rca_data = convert_polars_traces_to_rca_data(args.traces)
 
@@ -374,7 +372,6 @@ class MicroHECLAdapter(BaseAdapter):
             return answers
 
         return []
-
 
 
 class MicroRCAAdapter(BaseAdapter):
@@ -412,7 +409,6 @@ class MicroRCAAdapter(BaseAdapter):
         return []
 
 
-
 class TONAdapter(BaseAdapter):
     """
     TON适配器
@@ -445,7 +441,6 @@ class TONAdapter(BaseAdapter):
             return answers
 
         return []
-
 
 
 class MicroRankAdapter(BaseAdapter):

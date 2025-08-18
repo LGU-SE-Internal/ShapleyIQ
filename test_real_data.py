@@ -19,7 +19,10 @@ from shapleyiq.platform.algorithms import (
     MicroRCAAdapter,
     ShapleyRCAAdapter,
 )
-from shapleyiq.platform.interface import ShapleyIQAlgorithmWrapper, ShapleyIQAlgorithmArgs
+from shapleyiq.platform.interface import (
+    ShapleyIQAlgorithmWrapper,
+    ShapleyIQAlgorithmArgs,
+)
 from shapleyiq.platform.data_loader import PlatformDataLoader
 from rcabench_platform.v2.algorithms.spec import AlgorithmArgs as RCABenchAlgorithmArgs
 
@@ -58,17 +61,19 @@ def test_algorithm_with_real_data(adapter_class, algorithm_name, **kwargs):
     try:
         # 创建适配器实例
         adapter = adapter_class(**kwargs)
-        
+
         # 包装为rcabench算法
         algorithm = ShapleyIQAlgorithmWrapper(adapter, cpu_count=1)
 
         # 准备rcabench算法参数
-        data_folder = Path("test/ts1-ts-route-plan-service-request-replace-method-qtbhzt")
+        data_folder = Path(
+            "test/ts1-ts-route-plan-service-request-replace-method-qtbhzt"
+        )
         args = RCABenchAlgorithmArgs(
             dataset="trainticket",
-            datapack="test1", 
+            datapack="test1",
             input_folder=data_folder,
-            output_folder=data_folder / "output"
+            output_folder=data_folder / "output",
         )
 
         # 运行算法
@@ -78,7 +83,7 @@ def test_algorithm_with_real_data(adapter_class, algorithm_name, **kwargs):
         if results and len(results) > 0:
             print(f"✅ {algorithm_name} 成功运行")
             print(f"   找到 {len(results)} 个服务结果:")
-            
+
             for result in results[:10]:  # 显示前10个结果
                 print(f"     排名 {result.rank}: {result.name} (级别: {result.level})")
 
@@ -88,6 +93,7 @@ def test_algorithm_with_real_data(adapter_class, algorithm_name, **kwargs):
     except Exception as e:
         print(f"❌ {algorithm_name} 运行失败: {e}")
         import traceback
+
         traceback.print_exc()
 
 
@@ -117,9 +123,7 @@ def main():
 
         for adapter_class, algorithm_name, kwargs in algorithms:
             try:
-                test_algorithm_with_real_data(
-                    adapter_class, algorithm_name, **kwargs
-                )
+                test_algorithm_with_real_data(adapter_class, algorithm_name, **kwargs)
                 success_count += 1
             except Exception as e:
                 print(f"❌ {algorithm_name} 测试失败: {e}")
@@ -135,9 +139,8 @@ def main():
     except Exception as e:
         print(f"❌ 测试失败: {e}")
         import traceback
+
         traceback.print_exc()
-
-
 
 
 if __name__ == "__main__":

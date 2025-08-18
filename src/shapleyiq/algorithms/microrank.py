@@ -133,7 +133,7 @@ class MicroRank(BaseRCAAlgorithm):
         self.request_timestamp = data.request_timestamp
         self.trace_dict = data.trace_dict or {}
         self.metrics_statistical_data = data.metrics_statistical_data or {}
-        
+
         # 使用已经分类的正常和异常traces
         self.normal_trace_dict = data.normal_trace_dict or {}
         self.abnormal_trace_dict = data.abnormal_trace_dict or {}
@@ -187,14 +187,14 @@ class MicroRank(BaseRCAAlgorithm):
         for trace_id, spans in self.normal_trace_dict.items():
             if not spans:
                 continue
-            
+
             index = 0  # normal traces
             edges = self._extract_edges_from_spans(spans)
             operation_set = self._extract_operations_from_spans(spans)
-            
+
             edges_list[index].update(edges)
             operation_vector[index].update(operation_set)
-            
+
             # Handle trace deduplication based on edge patterns
             edge_list = list(edges)
             if edge_list not in edge_trace_list[0]:
@@ -216,7 +216,7 @@ class MicroRank(BaseRCAAlgorithm):
                     trace_operation_dict[index][trace_id] = list(operation_set)
                     trace_count[index][trace_id] = 1
                     trace_vector[index].add(trace_id)
-            
+
             # Update operation coverage
             for operation in operation_set:
                 if operation in operation_trace_cover_dict[index]:
@@ -228,23 +228,23 @@ class MicroRank(BaseRCAAlgorithm):
         for trace_id, spans in self.abnormal_trace_dict.items():
             if not spans:
                 continue
-            
+
             # 计算root duration来判断这个trace是否真的异常
             root_duration = self._calculate_root_duration(spans)
-            
+
             # 根据RT阈值分类: 超过阈值的是异常(index=1)，否则是正常(index=0)
             if self.rt_threshold is not None:
                 index = 1 if root_duration > self.rt_threshold else 0
             else:
                 # 如果没有阈值，默认认为异常阶段的trace都是异常的
                 index = 1
-            
+
             edges = self._extract_edges_from_spans(spans)
             operation_set = self._extract_operations_from_spans(spans)
-            
+
             edges_list[index].update(edges)
             operation_vector[index].update(operation_set)
-            
+
             # Handle trace deduplication based on edge patterns
             edge_list = list(edges)
             if edge_list not in edge_trace_list[0]:
@@ -266,7 +266,7 @@ class MicroRank(BaseRCAAlgorithm):
                     trace_operation_dict[index][trace_id] = list(operation_set)
                     trace_count[index][trace_id] = 1
                     trace_vector[index].add(trace_id)
-            
+
             # Update operation coverage
             for operation in operation_set:
                 if operation in operation_trace_cover_dict[index]:
