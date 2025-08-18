@@ -133,6 +133,10 @@ class MicroRank(BaseRCAAlgorithm):
         self.request_timestamp = data.request_timestamp
         self.trace_dict = data.trace_dict or {}
         self.metrics_statistical_data = data.metrics_statistical_data or {}
+        
+        # 使用已经分类的正常和异常traces
+        self.normal_trace_dict = data.normal_trace_dict or {}
+        self.abnormal_trace_dict = data.abnormal_trace_dict or {}
 
         # Convert traces to expected format if needed
         if not self.trace_dict and data.traces:
@@ -165,6 +169,7 @@ class MicroRank(BaseRCAAlgorithm):
     ]:
         """
         Classify traces into normal and abnormal categories.
+        正常阶段的数据都是正常的，异常阶段的数据需要根据RT阈值进一步分类。
 
         Returns:
             Tuple containing classified trace data structures
@@ -178,24 +183,18 @@ class MicroRank(BaseRCAAlgorithm):
 
         edge_trace_list = [[], []]  # For deduplication
 
-        for trace_id, spans in self.trace_dict.items():
+        # 处理正常阶段的traces - 这些都直接归类为正常(index=0)
+        for trace_id, spans in self.normal_trace_dict.items():
             if not spans:
                 continue
-
-            # Calculate root duration for classification
-            root_duration = self._calculate_root_duration(spans)
-
-            # Classify trace as normal (0) or abnormal (1)
-            index = 1 if root_duration > self.rt_threshold else 0
-
-            # Extract edges and operations from trace
+            
+            index = 0  # normal traces
             edges = self._extract_edges_from_spans(spans)
             operation_set = self._extract_operations_from_spans(spans)
-
-            # Update data structures
+            
             edges_list[index].update(edges)
             operation_vector[index].update(operation_set)
-
+            
             # Handle trace deduplication based on edge patterns
             edge_list = list(edges)
             if edge_list not in edge_trace_list[0]:
@@ -209,8 +208,65 @@ class MicroRank(BaseRCAAlgorithm):
                 existing_trace_id = edge_trace_list[1][
                     edge_trace_list[0].index(edge_list)
                 ]
-                trace_count[index][existing_trace_id] += 1
+                # 只有当existing_trace_id在当前index的trace_count中时才增加计数
+                if existing_trace_id in trace_count[index]:
+                    trace_count[index][existing_trace_id] += 1
+                else:
+                    # 如果不在当前index中，添加为新的trace
+                    trace_operation_dict[index][trace_id] = list(operation_set)
+                    trace_count[index][trace_id] = 1
+                    trace_vector[index].add(trace_id)
+            
+            # Update operation coverage
+            for operation in operation_set:
+                if operation in operation_trace_cover_dict[index]:
+                    operation_trace_cover_dict[index][operation] += 1
+                else:
+                    operation_trace_cover_dict[index][operation] = 1
 
+        # 处理异常阶段的traces - 需要根据RT阈值进一步分类
+        for trace_id, spans in self.abnormal_trace_dict.items():
+            if not spans:
+                continue
+            
+            # 计算root duration来判断这个trace是否真的异常
+            root_duration = self._calculate_root_duration(spans)
+            
+            # 根据RT阈值分类: 超过阈值的是异常(index=1)，否则是正常(index=0)
+            if self.rt_threshold is not None:
+                index = 1 if root_duration > self.rt_threshold else 0
+            else:
+                # 如果没有阈值，默认认为异常阶段的trace都是异常的
+                index = 1
+            
+            edges = self._extract_edges_from_spans(spans)
+            operation_set = self._extract_operations_from_spans(spans)
+            
+            edges_list[index].update(edges)
+            operation_vector[index].update(operation_set)
+            
+            # Handle trace deduplication based on edge patterns
+            edge_list = list(edges)
+            if edge_list not in edge_trace_list[0]:
+                edge_trace_list[0].append(edge_list)
+                edge_trace_list[1].append(trace_id)
+                trace_operation_dict[index][trace_id] = list(operation_set)
+                trace_count[index][trace_id] = 1
+                trace_vector[index].add(trace_id)
+            else:
+                # Find existing trace with same edge pattern
+                existing_trace_id = edge_trace_list[1][
+                    edge_trace_list[0].index(edge_list)
+                ]
+                # 只有当existing_trace_id在当前index的trace_count中时才增加计数
+                if existing_trace_id in trace_count[index]:
+                    trace_count[index][existing_trace_id] += 1
+                else:
+                    # 如果不在当前index中，添加为新的trace
+                    trace_operation_dict[index][trace_id] = list(operation_set)
+                    trace_count[index][trace_id] = 1
+                    trace_vector[index].add(trace_id)
+            
             # Update operation coverage
             for operation in operation_set:
                 if operation in operation_trace_cover_dict[index]:

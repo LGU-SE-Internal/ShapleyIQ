@@ -71,7 +71,7 @@ def aggregate_to_service_level(operation_results: Dict[str, float]) -> List[str]
 def convert_polars_traces_to_rca_data(traces_lf: pl.LazyFrame) -> RCAData:
     """
     将Polars LazyFrame的traces数据转换为原版算法需要的RCAData格式
-    完整保留原始数据结构和逻辑
+    完整保留原始数据结构和逻辑，并正确分类正常和异常数据
     """
     # Collect the lazy frame to get actual data
     traces_df = traces_lf.collect()
@@ -85,12 +85,19 @@ def convert_polars_traces_to_rca_data(traces_lf: pl.LazyFrame) -> RCAData:
     service_to_operations = {}
     trace_data_dict = {}
     ts_data_dict = {}
+    
+    # 为MicroRank等算法分类正常和异常traces
+    normal_traces = {}
+    abnormal_traces = {}
 
     for group_data in trace_groups:
         trace_id_val = group_data[0][0]  # Extract the trace_id value
         trace_spans_df = group_data[1]  # Get the spans DataFrame
 
         trace_id_str = str(trace_id_val)
+        
+        # 检查这个trace是否为异常trace（根据anomal标记）
+        is_anomal_trace = any(row.get("anomal", 0) == 1 for row in trace_spans_df.iter_rows(named=True))
 
         # Convert each span to the format expected by TraceData
         spans = []
@@ -164,6 +171,12 @@ def convert_polars_traces_to_rca_data(traces_lf: pl.LazyFrame) -> RCAData:
             timestamp=spans[0]["startTime"] if spans else 0,
         )
         traces.append(trace_data)
+        
+        # 根据anomal标记分类trace
+        if is_anomal_trace:
+            abnormal_traces[trace_id_str] = spans
+        else:
+            normal_traces[trace_id_str] = spans
 
     # Create ServiceNode objects
     nodes = []
@@ -188,9 +201,26 @@ def convert_polars_traces_to_rca_data(traces_lf: pl.LazyFrame) -> RCAData:
 
     # Create RCAData object with complete data
     
-    # 为MicroRank算法构建metrics_statistical_data
+    # 为MicroRank算法构建metrics_statistical_data（仅使用正常数据）
     metrics_statistical_data = {}
-    for node_id, ts_data in ts_data_dict.items():
+    
+    # 首先构建正常数据的时间序列
+    normal_ts_data_dict = {}
+    for trace_id_str, spans in normal_traces.items():
+        for span in spans:
+            service_name = span.get("serviceName", "")
+            operation_name = span.get("operationName", "")
+            if service_name and operation_name:
+                node_id = f"{service_name}:{operation_name}"
+                duration = safe_convert_to_int(span.get("duration", span.get("Duration", 0)))
+                
+                if node_id not in normal_ts_data_dict:
+                    normal_ts_data_dict[node_id] = {"Duration": [], "MaxDuration": []}
+                normal_ts_data_dict[node_id]["Duration"].append(duration)
+                normal_ts_data_dict[node_id]["MaxDuration"].append(duration)
+    
+    # 从正常数据计算统计信息
+    for node_id, ts_data in normal_ts_data_dict.items():
         durations = ts_data.get("Duration", [])
         if durations:
             import statistics
@@ -201,11 +231,11 @@ def convert_polars_traces_to_rca_data(traces_lf: pl.LazyFrame) -> RCAData:
                 "Duration": [mean_duration, std_duration, count]
             }
     
-    # 为root_id添加特殊的统计数据 (基于所有root span的duration)
+    # 为root_id添加特殊的统计数据（同样只使用正常数据）
     if root_id:
         root_durations = []
-        for trace in traces:
-            for span in trace.spans:
+        for trace_id_str, spans in normal_traces.items():
+            for span in spans:
                 if not span.get("parentSpanId") and span.get("serviceName") and span.get("operationName"):
                     span_node_id = f"{span['serviceName']}:{span['operationName']}"
                     if span_node_id == root_id:
@@ -232,7 +262,9 @@ def convert_polars_traces_to_rca_data(traces_lf: pl.LazyFrame) -> RCAData:
         ts_data_dict=ts_data_dict,
         metrics_statistical_data=metrics_statistical_data,
         metrics_threshold={},
-        # 为MicroRank等算法添加额外的trace_dict
+        # 为MicroRank等算法添加正常和异常traces分类
+        normal_trace_dict=normal_traces,
+        abnormal_trace_dict=abnormal_traces,
         trace_dict={trace.trace_id: trace.spans for trace in traces},
     )
 
