@@ -1,0 +1,59 @@
+[project]
+name = "shapleyiq"
+version = "1.0.0"
+description = "Influence Quantification by Shapley Values for Performance Debugging of Microservices"
+readme = "README.md"
+
+requires-python = ">=3.13"
+dependencies = [
+    "numpy",
+    "scipy", 
+    "pandas",
+    "scikit-learn",
+    "matplotlib",
+    "rcabench-platform>=0.3.26",
+    "typer>=0.9.0",
+    "rich>=13.0.0",
+]
+
+[project.scripts]
+shapleyiq = "shapleyiq.cli:app"
+
+[build-system]
+requires = ["uv_build>=0.7.12,<0.8.0"]
+build-backend = "uv_build"
+
+[tool.pyright]
+exclude = [
+    ".git",
+    "**/__pycache__",
+    ".venv",
+    ".vscode",
+    ".idea",
+    "data/",
+    "output/",
+    "temp/",
+    "ShapleyIQ/",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=6.0",
+    "pytest-cov>=2.0",
+    "ruff>=0.12.2",
+    "pyright>=1.1.403",
+    "ipykernel>=6.29.5",
+    "jupyter>=1.0.0",
+    "matplotlib",
+    "seaborn",
+]
+
+trace = [
+    "jaeger-client>=4.6.0",
+    "py-zipkin>=0.20.0",
+]
+
+metrics = [
+    "prometheus-client>=0.8.0", 
+    "influxdb-client>=1.20.0",
+]
