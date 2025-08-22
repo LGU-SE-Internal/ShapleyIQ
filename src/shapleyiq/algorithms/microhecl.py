@@ -31,7 +31,7 @@ class MicroHECL(BaseRCAAlgorithm):
         """
         super().__init__("MicroHECL")
         self.time_window = time_window
-        self.metric_list = ["MaxDuration"]
+        self.metric_list = ["MaxDuration", "QPS", "EC"]  # 支持完整的metric列表
         self.adjacency_node_table = {}
 
     def analyze(self, data: RCAData, **kwargs) -> Dict[str, float]:
@@ -145,14 +145,23 @@ class MicroHECL(BaseRCAAlgorithm):
         for node_id in self.nodes_id:
             if node_id not in self.ts_data_dict:
                 self.ts_data_dict[node_id] = {metric: [] for metric in self.metric_list}
+                # 确保有MaxDuration数据
+                if "MaxDuration" not in self.ts_data_dict[node_id]:
+                    self.ts_data_dict[node_id]["MaxDuration"] = []
             if node_id not in self.metrics_statistical_data:
                 self.metrics_statistical_data[node_id] = {
                     metric: [0, 1, 0] for metric in self.metric_list
                 }
+                # 确保有MaxDuration的统计数据
+                if "MaxDuration" not in self.metrics_statistical_data[node_id]:
+                    self.metrics_statistical_data[node_id]["MaxDuration"] = [0, 1, 0]
             if node_id not in self.metrics_threshold:
                 self.metrics_threshold[node_id] = {
                     metric: [0, float("inf")] for metric in self.metric_list
                 }
+                # 确保有MaxDuration的阈值
+                if "MaxDuration" not in self.metrics_threshold[node_id]:
+                    self.metrics_threshold[node_id]["MaxDuration"] = [0, float("inf")]
 
     def _anomaly_detection(
         self, node_id: str, metric_type: str, use_trace_data: bool = True
@@ -168,9 +177,13 @@ class MicroHECL(BaseRCAAlgorithm):
         Returns:
             True if anomaly detected, False otherwise
         """
-        metric_type_key_dict = {"RT": "Duration", "EC": "EC", "QPS": "QPS"}
+        metric_type_key_dict = {
+            "RT": "MaxDuration",  # 修正：使用MaxDuration而不是Duration
+            "EC": "EC", 
+            "QPS": "QPS"
+        }
 
-        metric_key = metric_type_key_dict.get(metric_type, "Duration")
+        metric_key = metric_type_key_dict.get(metric_type, "MaxDuration")
 
         # Get time series data
         ts_data = self.ts_data_dict.get(node_id, {}).get(metric_key, [])
@@ -245,23 +258,45 @@ class MicroHECL(BaseRCAAlgorithm):
         Returns:
             List of correlated anomalous node IDs
         """
+        metric_type_key_dict = {
+            "RT": "MaxDuration",  # 使用MaxDuration而不是Duration
+            "EC": "EC",
+            "QPS": "QPS"
+        }
+
         correlated_nodes = []
 
         if current_node not in self.adjacency_node_table:
             return correlated_nodes
 
-        # Check upstream nodes (in_nodes)
-        in_nodes = self.adjacency_node_table[current_node]["in_nodes"]
+        # 根据metric类型决定传播方向
+        if metric_type in ['RT', 'EC']:
+            # RT和EC向下游传播
+            next_nodes = self.adjacency_node_table[current_node]["out_nodes"]
+        elif metric_type in ['QPS']:
+            # QPS向上游传播
+            next_nodes = self.adjacency_node_table[current_node]["in_nodes"]
+        else:
+            return correlated_nodes
 
-        for candidate_node in in_nodes:
-            # Check if candidate node is anomalous
+        metric_key = metric_type_key_dict.get(metric_type, "MaxDuration")
+
+        for candidate_node in next_nodes:
+            # 检查候选节点是否异常
             if self._anomaly_detection(candidate_node, metric_type):
-                # Check correlation
-                correlation = self._calculate_correlation(
-                    current_node, candidate_node, metric_type
-                )
-                if correlation > 0.5:  # Threshold for correlation
-                    correlated_nodes.append(candidate_node)
+                # 计算相关性
+                current_node_ts_data = self.ts_data_dict.get(current_node, {}).get(metric_key, [])
+                candidate_node_ts_data = self.ts_data_dict.get(candidate_node, {}).get(metric_key, [])
+                
+                if current_node_ts_data and candidate_node_ts_data:
+                    current_data = current_node_ts_data[-self.time_window:] if len(current_node_ts_data) >= self.time_window else current_node_ts_data
+                    candidate_data = candidate_node_ts_data[-self.time_window:] if len(candidate_node_ts_data) >= self.time_window else candidate_node_ts_data
+                    
+                    correlation = pearson_correlation(current_data, candidate_data, default_value=0.01)
+                    
+                    # 使用原始的相关性阈值：只要 > 0 就认为相关
+                    if correlation > 0:
+                        correlated_nodes.append(candidate_node)
 
         return correlated_nodes
 
@@ -344,7 +379,7 @@ class MicroHECL(BaseRCAAlgorithm):
         self, candidate_list: List[str], entry_node: str
     ) -> Dict[str, float]:
         """
-        Rank root cause candidates based on various criteria.
+        Rank root cause candidates based on correlation with entry node.
 
         Args:
             candidate_list: List of candidate node IDs
@@ -356,40 +391,28 @@ class MicroHECL(BaseRCAAlgorithm):
         if not candidate_list:
             return {}
 
-        ranking_scores = {}
-
+        scores = []
         for candidate in candidate_list:
-            score = 0.0
+            if candidate is None:  # Handle None candidates
+                continue
+                
+            # 使用MaxDuration计算与entry_node的相关性
+            candidate_ts_data = self.ts_data_dict.get(candidate, {}).get("MaxDuration", [])
+            entry_node_ts_data = self.ts_data_dict.get(entry_node, {}).get("MaxDuration", [])
+            
+            if candidate_ts_data and entry_node_ts_data:
+                candidate_data = candidate_ts_data[-self.time_window:] if len(candidate_ts_data) >= self.time_window else candidate_ts_data
+                entry_data = entry_node_ts_data[-self.time_window:] if len(entry_node_ts_data) >= self.time_window else entry_node_ts_data
+                
+                correlation = pearson_correlation(candidate_data, entry_data, default_value=0.01)
+                scores.append(correlation)
+            else:
+                scores.append(0.01)
 
-            # Factor 1: Anomaly severity
-            if self._anomaly_detection(candidate, "RT"):
-                score += 1.0
+        # 构建排序后的结果字典
+        ranked_scores = {}
+        for i in np.argsort(scores)[::-1]:  # 按相关性降序排列
+            if i < len(candidate_list) and candidate_list[i] is not None:
+                ranked_scores[candidate_list[i]] = scores[i]
 
-            # Factor 2: Correlation with entry node
-            correlation = self._calculate_correlation(candidate, entry_node, "RT")
-            score += correlation
-
-            # Factor 3: Position in call graph (upstream nodes get higher scores)
-            if candidate in self.adjacency_node_table:
-                # Nodes with more outgoing connections (services that call others) get higher scores
-                out_degree = len(self.adjacency_node_table[candidate]["out_nodes"])
-                score += out_degree * 0.1
-
-            # Factor 4: Historical anomaly frequency (simplified)
-            # This could be enhanced with actual historical data
-            score += 0.5
-
-            ranking_scores[candidate] = score
-
-        # Normalize scores
-        if ranking_scores:
-            max_score = max(ranking_scores.values())
-            if max_score > 0:
-                ranking_scores = {k: v / max_score for k, v in ranking_scores.items()}
-
-        # Sort by score (descending)
-        ranked_results = dict(
-            sorted(ranking_scores.items(), key=lambda x: x[1], reverse=True)
-        )
-
-        return ranked_results
+        return ranked_scores

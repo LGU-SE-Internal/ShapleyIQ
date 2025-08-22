@@ -98,6 +98,10 @@ def convert_polars_traces_to_rca_data(traces_lf: pl.LazyFrame) -> RCAData:
             # 安全转换时间相关字段
             start_time = safe_convert_to_int(row.get("time", 0))
             duration = safe_convert_to_int(row.get("duration", 0))
+            
+            # 获取状态码信息（data_loader已经转换为enum值：0=Unset, 1=Ok, 2=Error）
+            status_code = safe_convert_to_int(row.get("attr.status_code", 1))  # 默认为Ok=1
+            is_error = status_code == 2  # Error = 2
 
             span_id = row.get("span_id", "")
             parent_span_id = row.get("parent_span_id", "")
@@ -135,11 +139,18 @@ def convert_polars_traces_to_rca_data(traces_lf: pl.LazyFrame) -> RCAData:
                 trace_data_dict[node_id]["Duration"].append(duration)
                 # 不添加"unknown"到serverIp列表中
 
-                # 构建ts_data_dict (时间序列数据)
+                # 构建ts_data_dict (时间序列数据) - 添加QPS和EC支持
                 if node_id not in ts_data_dict:
-                    ts_data_dict[node_id] = {"Duration": [], "MaxDuration": []}
+                    ts_data_dict[node_id] = {
+                        "Duration": [], 
+                        "MaxDuration": [], 
+                        "QPS": [],      # 请求数量（每个span计为1个请求）
+                        "EC": []        # 错误数量
+                    }
                 ts_data_dict[node_id]["Duration"].append(duration)
                 ts_data_dict[node_id]["MaxDuration"].append(duration)
+                ts_data_dict[node_id]["QPS"].append(1)  # 每个span代表一个请求
+                ts_data_dict[node_id]["EC"].append(1 if is_error else 0)  # 错误计数
 
         # 构建调用关系edges
         for span in spans:
@@ -192,37 +203,65 @@ def convert_polars_traces_to_rca_data(traces_lf: pl.LazyFrame) -> RCAData:
 
     # Create RCAData object with complete data
 
-    # 为MicroRank算法构建metrics_statistical_data（仅使用正常数据）
+    # 为MicroRank等算法构建metrics_statistical_data（仅使用正常数据）
     metrics_statistical_data = {}
 
-    # 首先构建正常数据的时间序列
+    # 从正常traces计算统计数据，需要包含所有metrics (Duration, MaxDuration, QPS, EC)
     normal_ts_data_dict = {}
+    
+    # 重新处理正常traces数据以计算完整统计
     for trace_id_str, spans in normal_traces.items():
         for span in spans:
             service_name = span.get("serviceName", "")
             operation_name = span.get("operationName", "")
+            
             if service_name and operation_name:
                 node_id = f"{service_name}:{operation_name}"
-                duration = safe_convert_to_int(
-                    span.get("duration", span.get("Duration", 0))
-                )
-
+                duration = safe_convert_to_int(span.get("duration", span.get("Duration", 0)))
+                
+                # 对于正常数据，我们假设大部分请求都是成功的
+                # 在实际实现中，如果需要更精确的EC统计，需要从原始parquet数据重新处理
+                is_error = False  # 正常数据中假设错误率很低
+                
                 if node_id not in normal_ts_data_dict:
-                    normal_ts_data_dict[node_id] = {"Duration": [], "MaxDuration": []}
+                    normal_ts_data_dict[node_id] = {
+                        "Duration": [], 
+                        "MaxDuration": [], 
+                        "QPS": [], 
+                        "EC": []
+                    }
                 normal_ts_data_dict[node_id]["Duration"].append(duration)
                 normal_ts_data_dict[node_id]["MaxDuration"].append(duration)
+                normal_ts_data_dict[node_id]["QPS"].append(1)  # 每个span代表一个请求
+                normal_ts_data_dict[node_id]["EC"].append(1 if is_error else 0)
 
     # 从正常数据计算统计信息
     for node_id, ts_data in normal_ts_data_dict.items():
         durations = ts_data.get("Duration", [])
+        qps_data = ts_data.get("QPS", [])
+        ec_data = ts_data.get("EC", [])
+        
         if durations:
             import statistics
 
+            # Duration统计
             mean_duration = statistics.mean(durations)
             std_duration = statistics.stdev(durations) if len(durations) > 1 else 0
             count = len(durations)
+            
+            # QPS统计（请求数量 - 正常情况下每个span都是一个请求）
+            mean_qps = statistics.mean(qps_data) if qps_data else 1.0
+            std_qps = statistics.stdev(qps_data) if len(qps_data) > 1 else 0.1
+            
+            # EC统计（错误数量 - 正常数据中应该很少有错误）
+            mean_ec = statistics.mean(ec_data) if ec_data else 0.0
+            std_ec = statistics.stdev(ec_data) if len(ec_data) > 1 else 0.1
+            
             metrics_statistical_data[node_id] = {
-                "Duration": [mean_duration, std_duration, count]
+                "Duration": [mean_duration, std_duration, count],
+                "MaxDuration": [mean_duration, std_duration, count],
+                "QPS": [mean_qps, std_qps, count],
+                "EC": [mean_ec, std_ec, count]
             }
 
     # 为root_id添加特殊的统计数据（同样只使用正常数据）
@@ -251,8 +290,18 @@ def convert_polars_traces_to_rca_data(traces_lf: pl.LazyFrame) -> RCAData:
                 else mean_duration * 0.1
             )
             count = len(root_durations)
+            
+            # 为root_id也添加QPS和EC统计（假设正常数据中错误率很低）
+            mean_qps = 1.0  # 每个root span代表一个请求
+            std_qps = 0.1
+            mean_ec = 0.0   # 正常数据中假设错误很少
+            std_ec = 0.1
+            
             metrics_statistical_data[root_id] = {
-                "Duration": [mean_duration, std_duration, count]
+                "Duration": [mean_duration, std_duration, count],
+                "MaxDuration": [mean_duration, std_duration, count],
+                "QPS": [mean_qps, std_qps, count],
+                "EC": [mean_ec, std_ec, count]
             }
 
     rca_data = RCAData(
@@ -294,7 +343,7 @@ class ShapleyRCAAdapter:
         rca_data = convert_polars_traces_to_rca_data(traces_lf)
 
         # 使用原版算法运行分析
-        results = self.algorithm.run(
+        results = self.algorithm.analyze(
             rca_data, strategy="avg_by_contribution", sort_result=True
         )
 
@@ -325,7 +374,7 @@ class MicroHECLAdapter:
             initial_anomalous_node = rca_data.node_ids[0]
 
         # 使用原版算法运行分析
-        results = self.algorithm.run(
+        results = self.algorithm.analyze(
             rca_data,
             initial_anomalous_node=initial_anomalous_node,
             detect_metrics=["RT"],
@@ -353,7 +402,7 @@ class MicroRCAAdapter:
         rca_data = convert_polars_traces_to_rca_data(traces_lf)
 
         # 使用原版算法运行分析
-        results = self.algorithm.run(rca_data)
+        results = self.algorithm.analyze(rca_data)
 
         # 转换结果为service级别
         if isinstance(results, dict):
@@ -377,7 +426,7 @@ class TONAdapter:
         rca_data = convert_polars_traces_to_rca_data(traces_lf)
 
         # 使用原版算法运行分析
-        results = self.algorithm.run(rca_data, operation_only=True)
+        results = self.algorithm.analyze(rca_data, operation_only=True)
 
         # 转换结果为service级别
         if isinstance(results, dict):
@@ -401,7 +450,7 @@ class MicroRankAdapter:
         rca_data = convert_polars_traces_to_rca_data(traces_lf)
 
         # 使用原版算法运行分析
-        results = self.algorithm.run(rca_data, phi=0.5, omega=0.01, d=0.04)
+        results = self.algorithm.analyze(rca_data, phi=0.5, omega=0.01, d=0.04)
 
         # 转换结果为service级别
         if isinstance(results, dict):

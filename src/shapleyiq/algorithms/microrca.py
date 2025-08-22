@@ -32,7 +32,7 @@ class MicroRCA(BaseRCAAlgorithm):
         """
         super().__init__("MicroRCA")
         self.time_window = time_window
-        self.metric_list = ["MaxDuration"]
+        self.metric_list = ["MaxDuration", "QPS", "EC"]  # 支持完整的metric列表
         self.machine_metrics = [
             "node_cpu_utilization",
             "memory_utilization",
@@ -123,9 +123,10 @@ class MicroRCA(BaseRCAAlgorithm):
         Returns:
             True if anomaly detected
         """
-        metric_type_key_dict = {"RT": "Duration", "EC": "EC", "QPS": "QPS"}
+        # 修正：使用正确的metric映射，与数据适配器和MicroHECL保持一致
+        metric_type_key_dict = {"RT": "MaxDuration", "EC": "EC", "QPS": "QPS"}
 
-        metric_key = metric_type_key_dict.get(metric_type, "Duration")
+        metric_key = metric_type_key_dict.get(metric_type, "MaxDuration")
 
         # Get time series data
         ts_data = self.ts_data_dict.get(node_id, {}).get(metric_key, [])

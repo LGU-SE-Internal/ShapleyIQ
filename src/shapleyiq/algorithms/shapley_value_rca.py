@@ -35,8 +35,9 @@ class ShapleyValueRCA(BaseRCAAlgorithm):
         self.sync_overlap_threshold = sync_overlap_threshold
         self.normal_duration_dict = {}
         self.timeline_dict = {}
+        self.metrics_statistical_data = {}
 
-    def analyze(self, data: RCAData, **kwargs) -> Dict[str, float]:
+    def analyze(self, data: RCAData, **kwargs):
         """
         Perform Shapley value based root cause analysis.
 
@@ -48,8 +49,11 @@ class ShapleyValueRCA(BaseRCAAlgorithm):
                 - sort_result: Whether to sort results
 
         Returns:
-            Dictionary mapping node IDs to Shapley values
+            Dictionary mapping node IDs to Shapley values, or tuple if with_anomaly_nodes=True
         """
+        # 从RCAData中获取基线统计数据（类似MicroRank的处理方式）
+        self.metrics_statistical_data = data.metrics_statistical_data or {}
+        
         strategy = kwargs.get("strategy", "avg_by_contribution")
         with_anomaly_nodes = kwargs.get("with_anomaly_nodes", False)
         sort_result = kwargs.get("sort_result", True)
@@ -363,6 +367,8 @@ class ShapleyValueRCA(BaseRCAAlgorithm):
     def _get_normal_duration(self, node_id: str) -> Optional[float]:
         """
         Get normal duration for a node (baseline for comparison).
+        
+        使用metrics_statistical_data中的基线统计数据（类似MicroRank的处理方式）
 
         Args:
             node_id: Node identifier
@@ -376,8 +382,14 @@ class ShapleyValueRCA(BaseRCAAlgorithm):
         if node_id in self.normal_duration_dict:
             return self.normal_duration_dict[node_id]
 
-        # In the original implementation, this would query Redis
-        # For now, return None (baseline will be 0)
+        # 从metrics_statistical_data获取基线统计数据（从正常traces计算得出）
+        if hasattr(self, 'metrics_statistical_data') and node_id in self.metrics_statistical_data:
+            stats = self.metrics_statistical_data[node_id].get("Duration", [])
+            if len(stats) >= 1:  # [mean, std, count]
+                mean_duration = float(stats[0])
+                self.normal_duration_dict[node_id] = mean_duration
+                return mean_duration
+
         return None
 
     def _split_timelines(
