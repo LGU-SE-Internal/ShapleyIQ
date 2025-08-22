@@ -32,6 +32,10 @@ class TON(BaseRCAAlgorithm):
         super().__init__("TON")
         self.time_window = time_window
         self.metric_list = ["MaxDuration", "QPS", "EC"]  # 支持完整的metric列表
+        self.machine_metrics = [
+            "k8s.pod.cpu_limit_utilization",
+            "k8s.pod.memory_limit_utilization",
+        ]
 
     def analyze(self, data: RCAData, **kwargs) -> Dict[str, float]:
         """
@@ -80,16 +84,24 @@ class TON(BaseRCAAlgorithm):
         """Prepare data structures for analysis."""
         self.edges = data.edges
         self.nodes_id = data.node_ids
+        self.root_id = data.root_id  # 添加root_id支持
         self.trace_data_dict = data.trace_data_dict
         self.request_timestamp = data.request_timestamp
         self.ts_data_dict = data.ts_data_dict or {}
         self.metrics_statistical_data = data.metrics_statistical_data or {}
         self.metrics_threshold = data.metrics_threshold or {}
 
-        # Build operation-IP mapping
+        # Build operation-IP mapping (使用service_name作为IP映射)
         self.operation_ip_dict = {}
         for node in data.nodes:
-            self.operation_ip_dict[node.node_id] = node.server_ip
+            # 使用service_name作为"IP"，因为我们的数据没有真实IP
+            service_name = (
+                node.node_id.split(":")[0] if ":" in node.node_id else node.node_id
+            )
+            self.operation_ip_dict[node.node_id] = service_name
+
+        self.ip_list = list(set(self.operation_ip_dict.values()))
+        self.ip_ts_data_dict = data.ip_ts_data_dict or {}
 
         # Ensure all nodes have required data structures
         for node_id in self.nodes_id:
@@ -229,6 +241,9 @@ class TON(BaseRCAAlgorithm):
         """
         Calculate correlation between two nodes.
 
+        For machine nodes (service names acting as IPs), use machine metrics.
+        For service nodes, use application metrics.
+
         Args:
             node1: First node ID
             node2: Second node ID
@@ -236,22 +251,97 @@ class TON(BaseRCAAlgorithm):
         Returns:
             Correlation coefficient
         """
-        # Get time series data for both nodes
-        data1 = self.ts_data_dict.get(node1, {}).get("MaxDuration", [])
-        data2 = self.ts_data_dict.get(node2, {}).get("MaxDuration", [])
+        # Check if either node is a machine node (service name acting as IP)
+        is_node1_machine = node1 in self.ip_list
+        is_node2_machine = node2 in self.ip_list
 
-        if not data1 or not data2:
-            return 0.1  # Default weak correlation
+        # Get reference data (usually root service MaxDuration)
+        if hasattr(self, "root_id") and self.root_id:
+            reference_data = self.ts_data_dict.get(self.root_id, {}).get(
+                "MaxDuration", []
+            )
+        else:
+            # Use first available service data as reference
+            for service_id in self.nodes_id:
+                reference_data = self.ts_data_dict.get(service_id, {}).get(
+                    "MaxDuration", []
+                )
+                if reference_data:
+                    break
+            else:
+                return 0.1
 
-        # Use recent data for correlation calculation
-        recent_data1 = (
-            data1[-self.time_window :] if len(data1) >= self.time_window else data1
-        )
-        recent_data2 = (
-            data2[-self.time_window :] if len(data2) >= self.time_window else data2
-        )
+        # Calculate correlation based on node types
+        if is_node1_machine:
+            # node1 is a machine, calculate max correlation across all machine metrics
+            max_correlation = 0.1  # default
+            machine_data = self.ip_ts_data_dict.get(node1, {})
 
-        return pearson_correlation(recent_data1, recent_data2, default_value=0.1)
+            for metric in self.machine_metrics:
+                if metric in machine_data:
+                    metric_data = machine_data[metric]
+                    if metric_data:
+                        recent_metric = (
+                            metric_data[-self.time_window :]
+                            if len(metric_data) >= self.time_window
+                            else metric_data
+                        )
+                        recent_ref = (
+                            reference_data[-self.time_window :]
+                            if len(reference_data) >= self.time_window
+                            else reference_data
+                        )
+
+                        correlation = pearson_correlation(
+                            recent_metric, recent_ref, default_value=0.1
+                        )
+                        max_correlation = max(max_correlation, correlation)
+
+            return max_correlation
+
+        elif is_node2_machine:
+            # node2 is a machine, similar logic
+            max_correlation = 0.1
+            machine_data = self.ip_ts_data_dict.get(node2, {})
+
+            for metric in self.machine_metrics:
+                if metric in machine_data:
+                    metric_data = machine_data[metric]
+                    if metric_data:
+                        recent_metric = (
+                            metric_data[-self.time_window :]
+                            if len(metric_data) >= self.time_window
+                            else metric_data
+                        )
+                        recent_ref = (
+                            reference_data[-self.time_window :]
+                            if len(reference_data) >= self.time_window
+                            else reference_data
+                        )
+
+                        correlation = pearson_correlation(
+                            recent_metric, recent_ref, default_value=0.1
+                        )
+                        max_correlation = max(max_correlation, correlation)
+
+            return max_correlation
+
+        else:
+            # Both are service nodes, use application metrics
+            data1 = self.ts_data_dict.get(node1, {}).get("MaxDuration", [])
+            data2 = self.ts_data_dict.get(node2, {}).get("MaxDuration", [])
+
+            if not data1 or not data2:
+                return 0.1
+
+            recent_data1 = (
+                data1[-self.time_window :] if len(data1) >= self.time_window else data1
+            )
+            recent_data2 = (
+                data2[-self.time_window :] if len(data2) >= self.time_window else data2
+            )
+
+            return pearson_correlation(recent_data1, recent_data2, default_value=0.1)
 
     def _initialize_opinions(self, anomalous_nodes: List[str]) -> Dict[str, float]:
         """

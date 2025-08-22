@@ -179,8 +179,8 @@ class MicroHECL(BaseRCAAlgorithm):
         """
         metric_type_key_dict = {
             "RT": "MaxDuration",  # 修正：使用MaxDuration而不是Duration
-            "EC": "EC", 
-            "QPS": "QPS"
+            "EC": "EC",
+            "QPS": "QPS",
         }
 
         metric_key = metric_type_key_dict.get(metric_type, "MaxDuration")
@@ -261,7 +261,7 @@ class MicroHECL(BaseRCAAlgorithm):
         metric_type_key_dict = {
             "RT": "MaxDuration",  # 使用MaxDuration而不是Duration
             "EC": "EC",
-            "QPS": "QPS"
+            "QPS": "QPS",
         }
 
         correlated_nodes = []
@@ -270,10 +270,10 @@ class MicroHECL(BaseRCAAlgorithm):
             return correlated_nodes
 
         # 根据metric类型决定传播方向
-        if metric_type in ['RT', 'EC']:
+        if metric_type in ["RT", "EC"]:
             # RT和EC向下游传播
             next_nodes = self.adjacency_node_table[current_node]["out_nodes"]
-        elif metric_type in ['QPS']:
+        elif metric_type in ["QPS"]:
             # QPS向上游传播
             next_nodes = self.adjacency_node_table[current_node]["in_nodes"]
         else:
@@ -285,15 +285,29 @@ class MicroHECL(BaseRCAAlgorithm):
             # 检查候选节点是否异常
             if self._anomaly_detection(candidate_node, metric_type):
                 # 计算相关性
-                current_node_ts_data = self.ts_data_dict.get(current_node, {}).get(metric_key, [])
-                candidate_node_ts_data = self.ts_data_dict.get(candidate_node, {}).get(metric_key, [])
-                
+                current_node_ts_data = self.ts_data_dict.get(current_node, {}).get(
+                    metric_key, []
+                )
+                candidate_node_ts_data = self.ts_data_dict.get(candidate_node, {}).get(
+                    metric_key, []
+                )
+
                 if current_node_ts_data and candidate_node_ts_data:
-                    current_data = current_node_ts_data[-self.time_window:] if len(current_node_ts_data) >= self.time_window else current_node_ts_data
-                    candidate_data = candidate_node_ts_data[-self.time_window:] if len(candidate_node_ts_data) >= self.time_window else candidate_node_ts_data
-                    
-                    correlation = pearson_correlation(current_data, candidate_data, default_value=0.01)
-                    
+                    current_data = (
+                        current_node_ts_data[-self.time_window :]
+                        if len(current_node_ts_data) >= self.time_window
+                        else current_node_ts_data
+                    )
+                    candidate_data = (
+                        candidate_node_ts_data[-self.time_window :]
+                        if len(candidate_node_ts_data) >= self.time_window
+                        else candidate_node_ts_data
+                    )
+
+                    correlation = pearson_correlation(
+                        current_data, candidate_data, default_value=0.01
+                    )
+
                     # 使用原始的相关性阈值：只要 > 0 就认为相关
                     if correlation > 0:
                         correlated_nodes.append(candidate_node)
@@ -312,9 +326,10 @@ class MicroHECL(BaseRCAAlgorithm):
         Returns:
             Correlation coefficient
         """
-        metric_type_key_dict = {"RT": "Duration", "EC": "EC", "QPS": "QPS"}
+        # 修正：与其他地方保持一致的metric映射
+        metric_type_key_dict = {"RT": "MaxDuration", "EC": "EC", "QPS": "QPS"}
 
-        metric_key = metric_type_key_dict.get(metric_type, "Duration")
+        metric_key = metric_type_key_dict.get(metric_type, "MaxDuration")
 
         # Get time series data for both nodes
         data1 = self.ts_data_dict.get(node1, {}).get(metric_key, [])
@@ -395,16 +410,30 @@ class MicroHECL(BaseRCAAlgorithm):
         for candidate in candidate_list:
             if candidate is None:  # Handle None candidates
                 continue
-                
+
             # 使用MaxDuration计算与entry_node的相关性
-            candidate_ts_data = self.ts_data_dict.get(candidate, {}).get("MaxDuration", [])
-            entry_node_ts_data = self.ts_data_dict.get(entry_node, {}).get("MaxDuration", [])
-            
+            candidate_ts_data = self.ts_data_dict.get(candidate, {}).get(
+                "MaxDuration", []
+            )
+            entry_node_ts_data = self.ts_data_dict.get(entry_node, {}).get(
+                "MaxDuration", []
+            )
+
             if candidate_ts_data and entry_node_ts_data:
-                candidate_data = candidate_ts_data[-self.time_window:] if len(candidate_ts_data) >= self.time_window else candidate_ts_data
-                entry_data = entry_node_ts_data[-self.time_window:] if len(entry_node_ts_data) >= self.time_window else entry_node_ts_data
-                
-                correlation = pearson_correlation(candidate_data, entry_data, default_value=0.01)
+                candidate_data = (
+                    candidate_ts_data[-self.time_window :]
+                    if len(candidate_ts_data) >= self.time_window
+                    else candidate_ts_data
+                )
+                entry_data = (
+                    entry_node_ts_data[-self.time_window :]
+                    if len(entry_node_ts_data) >= self.time_window
+                    else entry_node_ts_data
+                )
+
+                correlation = pearson_correlation(
+                    candidate_data, entry_data, default_value=0.01
+                )
                 scores.append(correlation)
             else:
                 scores.append(0.01)

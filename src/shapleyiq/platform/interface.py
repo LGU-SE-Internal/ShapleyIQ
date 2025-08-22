@@ -46,8 +46,6 @@ class PlatformDataConverter:
     ) -> List[RCABenchAlgorithmAnswer]:
         """将service级别的分数转换为rcabench答案格式"""
         # 按分数排序
-        if "loadgenerator" in service_scores:
-            del service_scores["loadgenerator"]
         sorted_services = sorted(
             service_scores.items(), key=lambda x: x[1], reverse=True
         )

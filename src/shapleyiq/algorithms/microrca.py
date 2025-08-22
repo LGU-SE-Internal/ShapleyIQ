@@ -34,10 +34,8 @@ class MicroRCA(BaseRCAAlgorithm):
         self.time_window = time_window
         self.metric_list = ["MaxDuration", "QPS", "EC"]  # 支持完整的metric列表
         self.machine_metrics = [
-            "node_cpu_utilization",
-            "memory_utilization",
-            "root_partition_utilization",
-            "node_sockstat_TCP_tw",
+            "k8s.pod.cpu_limit_utilization",
+            "k8s.pod.memory_limit_utilization",
         ]
 
     def analyze(self, data: RCAData, **kwargs) -> Dict[str, float]:
