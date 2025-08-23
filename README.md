@@ -72,11 +72,26 @@ export RCABENCH_PASSWORD=admin123
 ```
 ```sh
 # upload algorithm
-docker build -t 10.10.10.240/library/rca-algo-microdig:latest .
-docker push 10.10.10.240/library/rca-algo-microdig:latest
-rca upload-algorithm-harbor ./
+bash deploy_all_algos.sh
 ```
 ```sh
 # batch test
-sudo -E .venv/bin/python run.py batch-test --label 8.15microdig
+sudo -E .venv/bin/p
+ython run.py batch-test --label 8.23shapleyiqbatch
+rca cross-dataset-metrics  -a microhecl -d pair-diag -dv all-8.23 -
+-tag 8.23shapleyiqbatch
+```
+
+```
+┌───────────┬───────────┬─────────────────┬───────────┬───────┬───────┬───────┬───────┬─────┬─────┬─────┬────────────┬────────────────┐
+│ algorithm ┆ dataset   ┆ dataset_version ┆ level     ┆  top1 ┆  top3 ┆  top5 ┆  mrr  ┆ as1 ┆ as3 ┆ as5 ┆ efficiency ┆ datapack_count │
+│ ---       ┆ ---       ┆ ---             ┆ ---       ┆   --- ┆   --- ┆   --- ┆  ---  ┆ --- ┆ --- ┆ --- ┆        --- ┆            --- │
+│ str       ┆ str       ┆ str             ┆ str       ┆   f64 ┆   f64 ┆   f64 ┆  f64  ┆ f64 ┆ f64 ┆ f64 ┆        f64 ┆            i64 │
+╞═══════════╪═══════════╪═════════════════╪═══════════╪═══════╪═══════╪═══════╪═══════╪═════╪═════╪═════╪════════════╪════════════════╡
+│ microrank ┆ pair-diag ┆ all-8.23        ┆ service   ┆ 0.138 ┆ 0.347 ┆ 0.475 ┆ 0.311 ┆ 0.0 ┆ 0.0 ┆ 0.0 ┆        0.0 ┆           1129 │
+│ ton       ┆ pair-diag ┆ all-8.23        ┆ service   ┆ 0.181 ┆ 0.308 ┆ 0.433 ┆ 0.31  ┆ 0.0 ┆ 0.0 ┆ 0.0 ┆        0.0 ┆           1130 │
+│ shapleyiq ┆ pair-diag ┆ all-8.23        ┆ service   ┆ 0.335 ┆ 0.533 ┆ 0.701 ┆ 0.485 ┆ 0.0 ┆ 0.0 ┆ 0.0 ┆        0.0 ┆           1130 │
+│ microhecl ┆ pair-diag ┆ all-8.23        ┆ service   ┆ 0.527 ┆ 0.527 ┆ 0.527 ┆ 0.527 ┆ 0.0 ┆ 0.0 ┆ 0.0 ┆        0.0 ┆           1130 │
+│ microrca  ┆ pair-diag ┆ all-8.23        ┆ service   ┆ 0.54  ┆ 0.615 ┆ 0.723 ┆ 0.623 ┆ 0.0 ┆ 0.0 ┆ 0.0 ┆        0.0 ┆           1130 │
+│ microdig  ┆ pair-diag ┆ all-8.23        ┆ service   ┆ 0.528 ┆ 0.756 ┆ 0.791 ┆ 0.647 ┆ 0.0 ┆ 0.0 ┆ 0.0 ┆        0.0 ┆           1129 │
 ```
