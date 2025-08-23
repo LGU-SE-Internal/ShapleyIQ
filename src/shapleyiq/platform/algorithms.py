@@ -33,14 +33,20 @@ class ShapleyRCA(Algorithm):
 
     def __call__(self, args: AlgorithmArgs) -> List[AlgorithmAnswer]:
         # 转换数据
-        data = PlatformDataConverter.from_rcabench_args(args)
+        data = PlatformDataConverter.from_rcabench_args(
+            args, need_anomaly_detection=False
+        )
 
         if data.traces is None:
             return []
 
         try:
-            # 运行算法
-            service_scores = self.adapter.run(data.traces)
+            # 运行算法 - ShapleyValueRCA不使用初始异常节点
+            service_scores = self.adapter.run(
+                data.traces,
+                initial_anomalous_node=data.initial_anomalous_node,
+                anomalous_services=data.anomalous_services,
+            )
 
             # 转换结果
             return PlatformDataConverter.to_rcabench_answers(service_scores)
@@ -66,8 +72,12 @@ class MicroHECL(Algorithm):
             return []
 
         try:
-            # 运行算法
-            service_scores = self.adapter.run(data.traces)
+            # 运行算法，传入初始异常节点和异常服务列表
+            service_scores = self.adapter.run(
+                data.traces,
+                initial_anomalous_node=data.initial_anomalous_node,
+                anomalous_services=data.anomalous_services,
+            )
 
             # 转换结果
             return PlatformDataConverter.to_rcabench_answers(service_scores)
@@ -87,14 +97,19 @@ class MicroRCA(Algorithm):
 
     def __call__(self, args: AlgorithmArgs) -> List[AlgorithmAnswer]:
         # 转换数据
-        data = PlatformDataConverter.from_rcabench_args(args)
+        data = PlatformDataConverter.from_rcabench_args(args,need_metrics=True)
 
         if data.traces is None:
             return []
 
         try:
-            # 运行算法
-            service_scores = self.adapter.run(data.traces)
+            # 运行算法 - MicroRCA不使用初始异常节点
+            service_scores = self.adapter.run(
+                data.traces,
+                data.metrics,
+                initial_anomalous_node=data.initial_anomalous_node,
+                anomalous_services=data.anomalous_services,
+            )
 
             # 转换结果
             return PlatformDataConverter.to_rcabench_answers(service_scores)
@@ -114,14 +129,19 @@ class TON(Algorithm):
 
     def __call__(self, args: AlgorithmArgs) -> List[AlgorithmAnswer]:
         # 转换数据
-        data = PlatformDataConverter.from_rcabench_args(args)
+        data = PlatformDataConverter.from_rcabench_args(args,need_metrics=True)
 
         if data.traces is None:
             return []
 
         try:
-            # 运行算法
-            service_scores = self.adapter.run(data.traces)
+            # 运行算法 - TON可以使用初始异常节点
+            service_scores = self.adapter.run(
+                data.traces,
+                data.metrics,
+                initial_anomalous_node=data.initial_anomalous_node,
+                anomalous_services=data.anomalous_services,
+            )
 
             # 转换结果
             return PlatformDataConverter.to_rcabench_answers(service_scores)
@@ -141,14 +161,18 @@ class MicroRank(Algorithm):
 
     def __call__(self, args: AlgorithmArgs) -> List[AlgorithmAnswer]:
         # 转换数据
-        data = PlatformDataConverter.from_rcabench_args(args)
+        data = PlatformDataConverter.from_rcabench_args(
+            args, need_anomaly_detection=False
+        )
 
         if data.traces is None:
             return []
 
         try:
-            # 运行算法
-            service_scores = self.adapter.run(data.traces)
+            # 运行算法 - MicroRank可以使用初始异常节点
+            service_scores = self.adapter.run(
+                data.traces, initial_anomalous_node=data.initial_anomalous_node
+            )
 
             # 转换结果
             return PlatformDataConverter.to_rcabench_answers(service_scores)

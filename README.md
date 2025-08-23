@@ -15,6 +15,10 @@ export RCABENCH_PASSWORD=admin123
 sudo -E .venv/bin/python run.py batch-test
 ```
 
+```sh
+sudo -E .venv/bin/python ./main.py eval single microrca rcabench_filtered ts0-ts-auth-service-stress-jv8m9r --clear
+```
+
 ┌───────────────────┬───────────┬───────┬───────┬─────────────────────┬──────────┬────────────┬────────────┬────────────┬──────────┬──────────┬─────────┐
 │ dataset           ┆ algorithm ┆ total ┆ error ┆ runtime.seconds:avg ┆      MRR ┆ AC@1.count ┆ AC@3.count ┆ AC@5.count ┆     AC@1 ┆     AC@3 ┆    AC@5 │
 │ ---               ┆ ---       ┆   --- ┆   --- ┆                 --- ┆      --- ┆        --- ┆        --- ┆        --- ┆      --- ┆      --- ┆     --- │

@@ -45,14 +45,18 @@ class TON(BaseRCAAlgorithm):
             data: Processed RCA data
             **kwargs: Additional parameters
                 - operation_only: Whether to return only operation-level results
+                - initial_anomalous_node: Starting node for analysis (optional)
+                - anomalous_services: List of anomalous services (optional)
 
         Returns:
             Dictionary mapping node IDs to root cause scores
         """
         operation_only = kwargs.get("operation_only", True)
+        initial_anomalous_node = kwargs.get("initial_anomalous_node")
+        anomalous_services = kwargs.get("anomalous_services", [])
 
         # Prepare data structures
-        self._prepare_data(data)
+        self._prepare_data(data, initial_anomalous_node, anomalous_services)
 
         # Find anomalous nodes
         anomalous_nodes = self._get_anomalous_nodes()
@@ -80,11 +84,16 @@ class TON(BaseRCAAlgorithm):
 
         return final_opinions
 
-    def _prepare_data(self, data: RCAData) -> None:
+    def _prepare_data(
+        self, data: RCAData, initial_anomalous_node=None, anomalous_services=None
+    ) -> None:
         """Prepare data structures for analysis."""
         self.edges = data.edges
         self.nodes_id = data.node_ids
-        self.root_id = data.root_id  # 添加root_id支持
+        self.initial_anomalous_node = (
+            initial_anomalous_node or data.root_id
+        )  # 使用initial_anomalous_node而不是root_id
+        self.anomalous_services = anomalous_services or []  # 添加异常服务列表
         self.trace_data_dict = data.trace_data_dict
         self.request_timestamp = data.request_timestamp
         self.ts_data_dict = data.ts_data_dict or {}
@@ -193,11 +202,55 @@ class TON(BaseRCAAlgorithm):
         """
         Get list of anomalous nodes.
 
+        如果有anomalous_services（从conclusion检测的异常服务），
+        则查找包含这些服务的所有节点；否则使用原有的异常检测逻辑。
+
         Returns:
             List of anomalous node IDs
         """
         anomalous_nodes = []
 
+        # 如果有detected anomalous services，优先使用
+        if hasattr(self, "anomalous_services") and self.anomalous_services:
+            for service in self.anomalous_services:
+                # 找到包含该服务的所有节点
+                for node_id in self.nodes_id:
+                    if service in node_id:
+                        anomalous_nodes.append(node_id)
+
+            if anomalous_nodes:
+                logger.info(
+                    f"TON using detected anomalous services: {self.anomalous_services}"
+                )
+                logger.info(
+                    f"Found {len(anomalous_nodes)} anomalous nodes from detected services"
+                )
+                return anomalous_nodes
+
+        # 如果有单个initial_anomalous_node，优先使用
+        if hasattr(self, "initial_anomalous_node") and self.initial_anomalous_node:
+            # 提取服务名称
+            if ":" in self.initial_anomalous_node:
+                service_name = self.initial_anomalous_node.split(":")[0]
+            else:
+                service_name = self.initial_anomalous_node
+
+            # 找到包含该服务的所有节点
+            for node_id in self.nodes_id:
+                if service_name in node_id:
+                    anomalous_nodes.append(node_id)
+
+            if anomalous_nodes:
+                logger.info(f"TON using initial anomalous node service: {service_name}")
+                logger.info(
+                    f"Found {len(anomalous_nodes)} anomalous nodes from initial service"
+                )
+                return anomalous_nodes
+
+        # 回退到原有的异常检测逻辑
+        logger.info(
+            "TON: No detected anomalous services, using RT-based anomaly detection"
+        )
         for node_id in self.nodes_id:
             if self._anomaly_detection(node_id, "RT"):
                 anomalous_nodes.append(node_id)
@@ -256,8 +309,8 @@ class TON(BaseRCAAlgorithm):
         is_node2_machine = node2 in self.ip_list
 
         # Get reference data (usually root service MaxDuration)
-        if hasattr(self, "root_id") and self.root_id:
-            reference_data = self.ts_data_dict.get(self.root_id, {}).get(
+        if hasattr(self, "initial_anomalous_node") and self.initial_anomalous_node:
+            reference_data = self.ts_data_dict.get(self.initial_anomalous_node, {}).get(
                 "MaxDuration", []
             )
         else:

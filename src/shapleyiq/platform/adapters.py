@@ -4,7 +4,7 @@ Algorithm Adapters
 """
 
 from datetime import datetime
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import polars as pl
 
@@ -40,9 +40,7 @@ def safe_convert_to_int(value):
     return 0
 
 
-def aggregate_to_service_level(
-    operation_results: Dict[str, float]
-) -> Dict[str, float]:
+def aggregate_to_service_level(operation_results: Dict[str, float]) -> Dict[str, float]:
     """聚合到service级别"""
     service_scores = {}
     for operation_name, score in operation_results.items():
@@ -57,7 +55,9 @@ def aggregate_to_service_level(
     return service_scores
 
 
-def convert_polars_traces_to_rca_data(traces_lf: pl.LazyFrame) -> RCAData:
+def convert_polars_traces_to_rca_data(
+    traces_lf: pl.LazyFrame, metrics_lf: Optional[pl.LazyFrame] = None
+) -> RCAData:
     """
     将Polars LazyFrame的traces数据转换为原版算法需要的RCAData格式
     完整保留原始数据结构和逻辑，并正确分类正常和异常数据
@@ -98,9 +98,11 @@ def convert_polars_traces_to_rca_data(traces_lf: pl.LazyFrame) -> RCAData:
             # 安全转换时间相关字段
             start_time = safe_convert_to_int(row.get("time", 0))
             duration = safe_convert_to_int(row.get("duration", 0))
-            
+
             # 获取状态码信息（data_loader已经转换为enum值：0=Unset, 1=Ok, 2=Error）
-            status_code = safe_convert_to_int(row.get("attr.status_code", 1))  # 默认为Ok=1
+            status_code = safe_convert_to_int(
+                row.get("attr.status_code", 1)
+            )  # 默认为Ok=1
             is_error = status_code == 2  # Error = 2
 
             span_id = row.get("span_id", "")
@@ -142,10 +144,10 @@ def convert_polars_traces_to_rca_data(traces_lf: pl.LazyFrame) -> RCAData:
                 # 构建ts_data_dict (时间序列数据) - 添加QPS和EC支持
                 if node_id not in ts_data_dict:
                     ts_data_dict[node_id] = {
-                        "Duration": [], 
-                        "MaxDuration": [], 
-                        "QPS": [],      # 请求数量（每个span计为1个请求）
-                        "EC": []        # 错误数量
+                        "Duration": [],
+                        "MaxDuration": [],
+                        "QPS": [],  # 请求数量（每个span计为1个请求）
+                        "EC": [],  # 错误数量
                     }
                 ts_data_dict[node_id]["Duration"].append(duration)
                 ts_data_dict[node_id]["MaxDuration"].append(duration)
@@ -208,27 +210,29 @@ def convert_polars_traces_to_rca_data(traces_lf: pl.LazyFrame) -> RCAData:
 
     # 从正常traces计算统计数据，需要包含所有metrics (Duration, MaxDuration, QPS, EC)
     normal_ts_data_dict = {}
-    
+
     # 重新处理正常traces数据以计算完整统计
     for trace_id_str, spans in normal_traces.items():
         for span in spans:
             service_name = span.get("serviceName", "")
             operation_name = span.get("operationName", "")
-            
+
             if service_name and operation_name:
                 node_id = f"{service_name}:{operation_name}"
-                duration = safe_convert_to_int(span.get("duration", span.get("Duration", 0)))
-                
+                duration = safe_convert_to_int(
+                    span.get("duration", span.get("Duration", 0))
+                )
+
                 # 对于正常数据，我们假设大部分请求都是成功的
                 # 在实际实现中，如果需要更精确的EC统计，需要从原始parquet数据重新处理
                 is_error = False  # 正常数据中假设错误率很低
-                
+
                 if node_id not in normal_ts_data_dict:
                     normal_ts_data_dict[node_id] = {
-                        "Duration": [], 
-                        "MaxDuration": [], 
-                        "QPS": [], 
-                        "EC": []
+                        "Duration": [],
+                        "MaxDuration": [],
+                        "QPS": [],
+                        "EC": [],
                     }
                 normal_ts_data_dict[node_id]["Duration"].append(duration)
                 normal_ts_data_dict[node_id]["MaxDuration"].append(duration)
@@ -240,7 +244,7 @@ def convert_polars_traces_to_rca_data(traces_lf: pl.LazyFrame) -> RCAData:
         durations = ts_data.get("Duration", [])
         qps_data = ts_data.get("QPS", [])
         ec_data = ts_data.get("EC", [])
-        
+
         if durations:
             import statistics
 
@@ -248,20 +252,20 @@ def convert_polars_traces_to_rca_data(traces_lf: pl.LazyFrame) -> RCAData:
             mean_duration = statistics.mean(durations)
             std_duration = statistics.stdev(durations) if len(durations) > 1 else 0
             count = len(durations)
-            
+
             # QPS统计（请求数量 - 正常情况下每个span都是一个请求）
             mean_qps = statistics.mean(qps_data) if qps_data else 1.0
             std_qps = statistics.stdev(qps_data) if len(qps_data) > 1 else 0.1
-            
+
             # EC统计（错误数量 - 正常数据中应该很少有错误）
             mean_ec = statistics.mean(ec_data) if ec_data else 0.0
             std_ec = statistics.stdev(ec_data) if len(ec_data) > 1 else 0.1
-            
+
             metrics_statistical_data[node_id] = {
                 "Duration": [mean_duration, std_duration, count],
                 "MaxDuration": [mean_duration, std_duration, count],
                 "QPS": [mean_qps, std_qps, count],
-                "EC": [mean_ec, std_ec, count]
+                "EC": [mean_ec, std_ec, count],
             }
 
     # 为root_id添加特殊的统计数据（同样只使用正常数据）
@@ -290,19 +294,67 @@ def convert_polars_traces_to_rca_data(traces_lf: pl.LazyFrame) -> RCAData:
                 else mean_duration * 0.1
             )
             count = len(root_durations)
-            
+
             # 为root_id也添加QPS和EC统计（假设正常数据中错误率很低）
             mean_qps = 1.0  # 每个root span代表一个请求
             std_qps = 0.1
-            mean_ec = 0.0   # 正常数据中假设错误很少
+            mean_ec = 0.0  # 正常数据中假设错误很少
             std_ec = 0.1
-            
+
             metrics_statistical_data[root_id] = {
                 "Duration": [mean_duration, std_duration, count],
                 "MaxDuration": [mean_duration, std_duration, count],
                 "QPS": [mean_qps, std_qps, count],
-                "EC": [mean_ec, std_ec, count]
+                "EC": [mean_ec, std_ec, count],
             }
+
+    # 处理metrics数据（为TON和MicroRCA算法）
+    ip_ts_data_dict = {}
+    if metrics_lf is not None:
+        # 收集metrics数据并按service_name分组
+        # 真实数据是行式格式：每行包含metric名称、value和service_name
+        metrics_df = metrics_lf.collect()
+
+        # 过滤出我们需要的machine metrics
+        machine_metrics_df = metrics_df.filter(
+            pl.col("metric").is_in(
+                ["k8s.pod.cpu_limit_utilization", "k8s.pod.memory_limit_utilization"]
+            )
+        )
+
+        # 创建service_name到metrics数据的映射
+        service_metrics = {}
+
+        for row in machine_metrics_df.iter_rows(named=True):
+            service_name = row.get("service_name", "")
+            if not service_name:  # 跳过空的service_name
+                continue
+
+            # 获取时间戳和metric信息
+            timestamp = row.get("time", 0)
+            if hasattr(timestamp, "timestamp"):  # 如果是datetime对象
+                timestamp = timestamp.timestamp()
+            elif timestamp == 0:
+                timestamp = 0
+
+            metric_name = row.get("metric", "")
+            metric_value = float(row.get("value", 0.0))
+
+            if service_name not in service_metrics:
+                service_metrics[service_name] = {
+                    "k8s.pod.cpu_limit_utilization": [],
+                    "k8s.pod.memory_limit_utilization": [],
+                    "timestamps": [],
+                }
+
+            # 将数据添加到对应的metric列表中
+            if metric_name in service_metrics[service_name]:
+                service_metrics[service_name][metric_name].append(metric_value)
+                service_metrics[service_name]["timestamps"].append(timestamp)
+
+        # 转换为ip_ts_data_dict格式（使用service_name作为key）
+        # 这样TON算法可以通过service_name获取对应的machine metrics
+        ip_ts_data_dict = service_metrics
 
     rca_data = RCAData(
         edges=all_edges,
@@ -316,6 +368,7 @@ def convert_polars_traces_to_rca_data(traces_lf: pl.LazyFrame) -> RCAData:
         ts_data_dict=ts_data_dict,
         metrics_statistical_data=metrics_statistical_data,
         metrics_threshold={},
+        ip_ts_data_dict=ip_ts_data_dict,  # 添加metrics数据支持
         # 为MicroRank等算法添加正常和异常traces分类
         normal_trace_dict=normal_traces,
         abnormal_trace_dict=abnormal_traces,
@@ -337,12 +390,23 @@ class ShapleyRCAAdapter:
             using_cache=using_cache, sync_overlap_threshold=sync_overlap_threshold
         )
 
-    def run(self, traces_lf: pl.LazyFrame) -> Dict[str, float]:
-        """运行算法并返回service级别的结果"""
+    def run(
+        self,
+        traces_lf: pl.LazyFrame,
+        initial_anomalous_node: Optional[str] = None,
+        anomalous_services: Optional[List[str]] = None,
+    ) -> Dict[str, float]:
+        """运行算法并返回service级别的结果
+
+        Args:
+            traces_lf: trace数据
+            initial_anomalous_node: 初始异常节点（ShapleyValueRCA不使用此参数）
+            anomalous_services: 异常服务列表（ShapleyValueRCA不使用此参数）
+        """
         # 转换数据格式
         rca_data = convert_polars_traces_to_rca_data(traces_lf)
 
-        # 使用原版算法运行分析
+        # 使用原版算法运行分析 - ShapleyValueRCA使用全局分析，不依赖初始节点
         results = self.algorithm.analyze(
             rca_data, strategy="avg_by_contribution", sort_result=True
         )
@@ -351,7 +415,6 @@ class ShapleyRCAAdapter:
         if isinstance(results, dict):
             return aggregate_to_service_level(results)
         return {}
-
 
 
 class MicroHECLAdapter:
@@ -363,28 +426,47 @@ class MicroHECLAdapter:
         self.time_window = time_window
         self.algorithm = MicroHECL(time_window=time_window)
 
-    def run(self, traces_lf: pl.LazyFrame) -> Dict[str, float]:
-        """运行算法并返回service级别的结果"""
+    def run(
+        self,
+        traces_lf: pl.LazyFrame,
+        initial_anomalous_node: Optional[str] = None,
+        anomalous_services: Optional[List[str]] = None,
+    ) -> Dict[str, float]:
+        """运行算法并返回service级别的结果
+
+        Args:
+            traces_lf: trace数据
+            initial_anomalous_node: 初始异常节点（可选）
+            anomalous_services: 异常服务列表（MicroHECL只使用第一个）
+        """
         # 转换数据格式
         rca_data = convert_polars_traces_to_rca_data(traces_lf)
 
-        # 确定初始异常节点
-        initial_anomalous_node = rca_data.root_id if rca_data.root_id else None
-        if not initial_anomalous_node and rca_data.node_ids:
-            initial_anomalous_node = rca_data.node_ids[0]
+        # MicroHECL只使用第一个异常服务，如果有的话
+        if not initial_anomalous_node and anomalous_services:
+            # 在trace数据中查找匹配的节点
+            for node_id in rca_data.node_ids:
+                if anomalous_services[0] in node_id:
+                    initial_anomalous_node = node_id
+                    break
+
+        # 使用传入的初始异常节点，如果没有提供则使用默认逻辑
+        if not initial_anomalous_node:
+            initial_anomalous_node = rca_data.root_id if rca_data.root_id else None
+            if not initial_anomalous_node and rca_data.node_ids:
+                initial_anomalous_node = rca_data.node_ids[0]
 
         # 使用原版算法运行分析
         results = self.algorithm.analyze(
             rca_data,
             initial_anomalous_node=initial_anomalous_node,
-            detect_metrics=["RT"],
+            detect_metrics=["RT", "EC", "QPS"],  # 使用完整的metric列表
         )
 
         # 转换结果为service级别
         if isinstance(results, dict):
             return aggregate_to_service_level(results)
         return {}
-
 
 
 class MicroRCAAdapter:
@@ -396,19 +478,34 @@ class MicroRCAAdapter:
         self.time_window = time_window
         self.algorithm = MicroRCA(time_window=time_window)
 
-    def run(self, traces_lf: pl.LazyFrame) -> Dict[str, float]:
-        """运行算法并返回service级别的结果"""
+    def run(
+        self,
+        traces_lf: pl.LazyFrame,
+        metrics_lf: Optional[pl.LazyFrame] = None,
+        initial_anomalous_node: Optional[str] = None,
+        anomalous_services: Optional[List[str]] = None,
+    ) -> Dict[str, float]:
+        """运行算法并返回service级别的结果
+
+        Args:
+            traces_lf: trace数据
+            initial_anomalous_node: 初始异常节点（MicroRCA可以使用单个节点）
+            anomalous_services: 异常服务列表（MicroRCA优先使用此参数）
+        """
         # 转换数据格式
-        rca_data = convert_polars_traces_to_rca_data(traces_lf)
+        rca_data = convert_polars_traces_to_rca_data(traces_lf, metrics_lf)
 
         # 使用原版算法运行分析
-        results = self.algorithm.analyze(rca_data)
+        results = self.algorithm.analyze(
+            rca_data,
+            initial_anomalous_node=initial_anomalous_node,
+            anomalous_services=anomalous_services,
+        )
 
         # 转换结果为service级别
         if isinstance(results, dict):
             return aggregate_to_service_level(results)
         return {}
-
 
 
 class TONAdapter:
@@ -420,19 +517,35 @@ class TONAdapter:
         self.time_window = time_window
         self.algorithm = TON(time_window=time_window)
 
-    def run(self, traces_lf: pl.LazyFrame) -> Dict[str, float]:
-        """运行算法并返回service级别的结果"""
-        # 转换数据格式
-        rca_data = convert_polars_traces_to_rca_data(traces_lf)
+    def run(
+        self,
+        traces_lf: pl.LazyFrame,
+        metrics_lf: Optional[pl.LazyFrame] = None,
+        initial_anomalous_node: Optional[str] = None,
+        anomalous_services: Optional[List[str]] = None,
+    ) -> Dict[str, float]:
+        """运行算法并返回service级别的结果
 
-        # 使用原版算法运行分析
-        results = self.algorithm.analyze(rca_data, operation_only=True)
+        Args:
+            traces_lf: trace数据
+            initial_anomalous_node: 初始异常节点（TON可以使用此参数）
+            anomalous_services: 异常服务列表（TON优先使用此参数）
+        """
+        # 转换数据格式
+        rca_data = convert_polars_traces_to_rca_data(traces_lf, metrics_lf)
+
+        # 使用原版算法运行分析 - TON支持initial_anomalous_node和anomalous_services
+        results = self.algorithm.analyze(
+            rca_data,
+            operation_only=True,
+            initial_anomalous_node=initial_anomalous_node,
+            anomalous_services=anomalous_services,
+        )
 
         # 转换结果为service级别
         if isinstance(results, dict):
             return aggregate_to_service_level(results)
         return {}
-
 
 
 class MicroRankAdapter:
@@ -444,16 +557,40 @@ class MicroRankAdapter:
         self.n_sigma = n_sigma
         self.algorithm = MicroRank(n_sigma=n_sigma)
 
-    def run(self, traces_lf: pl.LazyFrame) -> Dict[str, float]:
-        """运行算法并返回service级别的结果"""
+    def run(
+        self,
+        traces_lf: pl.LazyFrame,
+        initial_anomalous_node: Optional[str] = None,
+        anomalous_services: Optional[List[str]] = None,
+    ) -> Dict[str, float]:
+        """运行算法并返回service级别的结果
+
+        Args:
+            traces_lf: trace数据
+            initial_anomalous_node: 初始异常节点（MicroRank可以使用此参数）
+            anomalous_services: 异常服务列表（MicroRank使用第一个，如果有的话）
+        """
         # 转换数据格式
         rca_data = convert_polars_traces_to_rca_data(traces_lf)
 
-        # 使用原版算法运行分析
-        results = self.algorithm.analyze(rca_data, phi=0.5, omega=0.01, d=0.04)
+        # MicroRank也可以使用第一个异常服务
+        if not initial_anomalous_node and anomalous_services:
+            # 在trace数据中查找匹配的节点
+            for node_id in rca_data.node_ids:
+                if anomalous_services[0] in node_id:
+                    initial_anomalous_node = node_id
+                    break
+
+        # 使用原版算法运行分析 - MicroRank支持initial_anomalous_node
+        results = self.algorithm.analyze(
+            rca_data,
+            phi=0.5,
+            omega=0.01,
+            d=0.04,
+            initial_anomalous_node=initial_anomalous_node,
+        )
 
         # 转换结果为service级别
         if isinstance(results, dict):
             return aggregate_to_service_level(results)
         return {}
-

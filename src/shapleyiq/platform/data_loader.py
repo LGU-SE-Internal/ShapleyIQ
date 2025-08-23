@@ -88,9 +88,11 @@ def ui_span_name_parser(df: pl.DataFrame) -> pl.DataFrame:
     Also removes loadgenerator spans and updates parent relationships
     """
     # Step 1: Identify loadgenerator spans to remove
-    loadgen_spans = df.filter(pl.col("service_name") == "loadgenerator").select("span_id")
+    loadgen_spans = df.filter(pl.col("service_name") == "loadgenerator").select(
+        "span_id"
+    )
     loadgen_span_ids = set(loadgen_spans.get_column("span_id").to_list())
-    
+
     # Step 2: Update parent_span_id for spans that have loadgenerator as parent
     # Set their parent_span_id to empty string (making them root spans)
     df_updated_parents = df.with_columns(
@@ -99,41 +101,44 @@ def ui_span_name_parser(df: pl.DataFrame) -> pl.DataFrame:
         .otherwise(pl.col("parent_span_id"))
         .alias("parent_span_id")
     )
-    
+
     # Step 3: Remove loadgenerator spans
     df_filtered = df_updated_parents.filter(pl.col("service_name") != "loadgenerator")
-    
+
     # Step 4: Handle UI dashboard span name replacement
     # For ts-ui-dashboard spans, we need to find their child spans and use those names
     # But we need to be careful not to duplicate data
-    
+
     # Find UI dashboard spans that have children
     ui_dashboard_spans = df_filtered.filter(pl.col("service_name") == "ts-ui-dashboard")
-    
+
     if ui_dashboard_spans.height > 0:
         # Create mapping from UI dashboard span_id to child span names
         ui_span_ids = set(ui_dashboard_spans.get_column("span_id").to_list())
-        
+
         # Find children of UI dashboard spans
         child_spans = df_filtered.filter(pl.col("parent_span_id").is_in(ui_span_ids))
-        
+
         if child_spans.height > 0:
             # Create a mapping from parent span ID to child span name
             # Take the first child's name if there are multiple children
             child_mapping = (
-                child_spans
-                .group_by("parent_span_id")
+                child_spans.group_by("parent_span_id")
                 .agg(pl.col("span_name").first().alias("child_span_name"))
                 .rename({"parent_span_id": "span_id"})
             )
-            
+
             # Join and update UI dashboard span names
-            processed_df = df_filtered.join(child_mapping, on="span_id", how="left").with_columns(
-                pl.when(pl.col("service_name") == "ts-ui-dashboard")
-                .then(pl.coalesce([pl.col("child_span_name"), pl.col("span_name")]))
-                .otherwise(pl.col("span_name"))
-                .alias("span_name")
-            ).drop("child_span_name")
+            processed_df = (
+                df_filtered.join(child_mapping, on="span_id", how="left")
+                .with_columns(
+                    pl.when(pl.col("service_name") == "ts-ui-dashboard")
+                    .then(pl.coalesce([pl.col("child_span_name"), pl.col("span_name")]))
+                    .otherwise(pl.col("span_name"))
+                    .alias("span_name")
+                )
+                .drop("child_span_name")
+            )
         else:
             # No children found for UI dashboard spans, keep original
             processed_df = df_filtered
@@ -151,7 +156,7 @@ def load_traces(input_folder: Path) -> pl.LazyFrame:
     anomal_traces = pl.scan_parquet(input_folder / "abnormal_traces.parquet")
     lf = merge_two_time_ranges(normal_traces, anomal_traces)
 
-    lf = tt_add_op_name(lf)
+
 
     status_code_values = ["Unset", "Ok", "Error"]
     lf = lf.with_columns(
@@ -169,7 +174,7 @@ def load_traces(input_folder: Path) -> pl.LazyFrame:
     df = lf.collect()
     df = ui_span_name_parser(df)
     lf = df.lazy()
-
+    lf = tt_add_op_name(lf)
     return lf
 
 
@@ -188,9 +193,10 @@ class PlatformDataLoader:
     platform data loader for ShapleyIQ algorithms
     """
 
-    def __init__(self, input_folder: Path):
+    def __init__(self, input_folder: Path, need_metrics: bool = False):
         self.input_folder = Path(input_folder)
         self.inject_time = load_inject_time(self.input_folder)
+        self.need_metrics = need_metrics
 
     def load_all_data(self):
         """Load all available data types"""
@@ -201,7 +207,9 @@ class PlatformDataLoader:
             data["traces"] = load_traces(self.input_folder)
 
         # Load metrics
-        if (self.input_folder / "normal_metrics.parquet").exists():
+        if (
+            self.input_folder / "normal_metrics.parquet"
+        ).exists() and self.need_metrics:
             data["metrics"] = load_metrics(self.input_folder)
 
         data["inject_time"] = self.inject_time
