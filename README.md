@@ -63,3 +63,20 @@ sudo -E ./.venv/bin/python ./main.py eval batch -a shapleyiq -a ton -a microrank
 └───────────────────┴───────────┴───────┴───────┴─────────────────────┴──────────┴────────────┴────────────┴────────────┴──────────┴──────────┴──────────┴──────────┴──────────┘
 ```
 给 ton microrca和microhecl加上alarm node（from detector），以及修复了ton和microrca的metric加载之后，效果明显提升
+
+
+```sh
+export RCABENCH_BASE_URL=http://10.10.10.220:32080
+export RCABENCH_USERNAME=admin
+export RCABENCH_PASSWORD=admin123
+```
+```sh
+# upload algorithm
+docker build -t 10.10.10.240/library/rca-algo-microdig:latest .
+docker push 10.10.10.240/library/rca-algo-microdig:latest
+rca upload-algorithm-harbor ./
+```
+```sh
+# batch test
+sudo -E .venv/bin/python run.py batch-test --label 8.15microdig
+```

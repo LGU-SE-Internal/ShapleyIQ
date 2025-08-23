@@ -21,7 +21,13 @@ from rcabench_platform.v2.logging import logger, timeit
 from rcabench_platform.v2.sources.convert import convert_datapack
 from rcabench_platform.v2.sources.rcabench import RcabenchDatapackLoader
 
-from src.microdig import MicroDig
+from src.shapleyiq.platform.algorithms import (
+    TON,
+    MicroHECL,
+    MicroRank,
+    MicroRCA,
+    ShapleyRCA,
+)
 
 app = typer.Typer(pretty_exceptions_show_locals=False)
 
@@ -43,7 +49,13 @@ def get_dataset(id: int):
 
 
 @timeit()
-def run_job(algorithm, algorithm_id: int, injection_id: int, injection_name: str, label: str | None = None):
+def run_job(
+    algorithm,
+    algorithm_id: int,
+    injection_id: int,
+    injection_name: str,
+    label: str | None = None,
+):
     """
     Plain, top-level worker function (no decorators, no Typer annotations).
     Safe to use from multiprocessing pools.
@@ -217,9 +229,11 @@ def run_batch(
 
 
 @app.command()
-def single_test(name: str = "ts4-ts-ui-dashboard-partition-mgbg8j",label: str | None = None):
+def single_test(
+    name: str = "ts4-ts-ui-dashboard-partition-mgbg8j", label: str | None = None
+):
     run_job(
-        algorithm=MicroDig,
+        algorithm=ShapleyRCA,
         algorithm_id=74,
         injection_id=5167,
         injection_name=name,
@@ -229,12 +243,12 @@ def single_test(name: str = "ts4-ts-ui-dashboard-partition-mgbg8j",label: str | 
 
 @app.command()
 def batch_test(label: str | None = None):
-    run_batch(
-        algorithm=MicroDig,
-        algorithm_id=77,
-        datasets=[6],
-        label=label
-    )
+    for algorithm, algorithm_id in zip(
+        [ShapleyRCA, TON, MicroRank, MicroHECL, MicroRCA], [102, 103, 104, 105, 106]
+    ):
+        run_batch(
+            algorithm=algorithm, algorithm_id=algorithm_id, datasets=[12], label=label
+        )
 
 
 if __name__ == "__main__":

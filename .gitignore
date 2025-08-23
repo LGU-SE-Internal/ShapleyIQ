@@ -174,3 +174,5 @@ introduction_examples/
 prepare_data/
 run/
 test
+
+*.bak
