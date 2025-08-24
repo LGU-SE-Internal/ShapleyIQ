@@ -72,7 +72,7 @@ def run_job(
     )
 
     a = algorithm()
-
+    t0 = time.time()
     answers = a(
         AlgorithmArgs(
             dataset="rcabench",
@@ -81,6 +81,8 @@ def run_job(
             output_folder=Path("/tmp/baro_output") / injection_name,
         )
     )
+    t1 = time.time()
+    runtime = t1 - t0
 
     result_rows = [
         {"level": ans.level, "result": ans.name, "rank": ans.rank, "confidence": 0}
@@ -89,7 +91,6 @@ def run_job(
     if len(answers) == 0:
         logger.warning(f"No answers from algorithm `{algorithm}`")
         return
-
     with RCABenchClient() as client:
         algo_api = AlgorithmsApi(client)
 
@@ -108,8 +109,10 @@ def run_job(
                     for row in result_rows
                 ],
                 datapack_id=injection_id,
+                duration=runtime,
             ),
         )
+
         logger.info(
             f"Submit detector result: response code: {resp.code}, message: {resp.message}"
         )
