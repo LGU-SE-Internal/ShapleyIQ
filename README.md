@@ -76,10 +76,8 @@ bash deploy_all_algos.sh
 ```
 ```sh
 # batch test
-sudo -E .venv/bin/p
-ython run.py batch-test --label 8.23shapleyiqbatch
-rca cross-dataset-metrics  -a microhecl -d pair-diag -dv all-8.23 -
--tag 8.23shapleyiqbatch
+sudo -E .venv/bin/python run.py batch-test --label 8.23shapleyiqbatch
+rca cross-dataset-metrics  -a microhecl -d pair-diag -dv all-8.23 --tag 8.23shapleyiqbatch
 ```
 
 ```
