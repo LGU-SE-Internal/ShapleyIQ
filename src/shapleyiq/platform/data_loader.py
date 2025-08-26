@@ -12,7 +12,7 @@ from pathlib import Path
 
 import polars as pl
 from rcabench_platform.v2.logging import logger
-
+from rcabench_platform.v2.datasets.train_ticket import extract_path
 
 def timeit():
     """Simple timing decorator"""
@@ -105,9 +105,7 @@ def ui_span_name_parser(df: pl.DataFrame) -> pl.DataFrame:
     # Step 3: Remove loadgenerator spans
     df_filtered = df_updated_parents.filter(pl.col("service_name") != "loadgenerator")
 
-    # Step 4: Handle UI dashboard span name replacement
-    # For ts-ui-dashboard spans, we need to find their child spans and use those names
-    # But we need to be careful not to duplicate data
+    # Step 4: Handle UI dashboard span name parse
 
     # Find UI dashboard spans that have children
     ui_dashboard_spans = df_filtered.filter(pl.col("service_name") == "ts-ui-dashboard")
@@ -133,7 +131,7 @@ def ui_span_name_parser(df: pl.DataFrame) -> pl.DataFrame:
                 df_filtered.join(child_mapping, on="span_id", how="left")
                 .with_columns(
                     pl.when(pl.col("service_name") == "ts-ui-dashboard")
-                    .then(pl.coalesce([pl.col("child_span_name"), pl.col("span_name")]))
+                    .then(pl.col("span_name").map_elements(extract_path, return_dtype=pl.String))
                     .otherwise(pl.col("span_name"))
                     .alias("span_name")
                 )
