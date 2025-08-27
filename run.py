@@ -247,10 +247,10 @@ def single_test(
 @app.command()
 def batch_test(label: str | None = None):
     for algorithm, algorithm_id in zip(
-        [ShapleyRCA, TON, MicroRank, MicroHECL, MicroRCA], [102, 103, 104, 105, 106]
+        [ShapleyRCA, TON, MicroRank, MicroHECL, MicroRCA], [124,125,126,127,128]
     ):
         run_batch(
-            algorithm=algorithm, algorithm_id=algorithm_id, datasets=[12], label=label
+            algorithm=algorithm, algorithm_id=algorithm_id, datasets=[16], label=label
         )
 
 
