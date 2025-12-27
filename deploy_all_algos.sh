@@ -27,8 +27,8 @@ for algo in "${ALGORITHMS[@]}"; do
     sed -i "s/name = \".*\"/name = \"$algo\"/" info.toml
     
     # Build and push docker image
-    docker build -t "10.10.10.240/library/rca-algo-$algo:latest" .
-    docker push "10.10.10.240/library/rca-algo-$algo:latest"
+    docker build -t "10.10.10.240/library/rca-algo-$algo:f45c02e" .
+    docker push "10.10.10.240/library/rca-algo-$algo:f45c02e"
     
     # Upload algorithm
     rca upload-algorithm-harbor ./
